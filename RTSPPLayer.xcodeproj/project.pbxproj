@@ -416,7 +416,7 @@
 				CODE_SIGN_IDENTITY = "Don't Code Sign";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "source/Preview\\ Content";
+				DEVELOPMENT_ASSET_PATHS = "\"source/Preview Content\"";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
