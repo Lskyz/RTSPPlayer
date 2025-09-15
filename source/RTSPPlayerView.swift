@@ -41,12 +41,10 @@ class RTSPPlayerUIView: UIView {
         mediaPlayer = VLCMediaPlayer()
         mediaPlayer?.drawable = self
         
-        // 볼륨 설정
-        mediaPlayer?.audio.volume = 100
+        // 볼륨 설정 (옵셔널 체이닝 사용)
+        mediaPlayer?.audio?.volume = 100
         
-        // 디버깅을 위한 로그 레벨 설정
-        mediaPlayer?.libraryInstance.debugLogging = true
-        mediaPlayer?.libraryInstance.debugLoggingLevel = 4
+        // VLC 로깅은 app.swift에서 전역적으로 설정
     }
     
     func play(url: String, username: String? = nil, password: String? = nil) {
@@ -57,7 +55,7 @@ class RTSPPlayerUIView: UIView {
         if let username = username, let password = password {
             // 인증이 필요한 경우 URL에 포함
             if let urlComponents = URLComponents(string: url) {
-                var components = urlComponents
+                let components = urlComponents
                 var urlString = "\(components.scheme ?? "rtsp")://"
                 urlString += "\(username):\(password)@"
                 urlString += "\(components.host ?? "")"
@@ -113,16 +111,28 @@ class RTSPPlayerUIView: UIView {
     }
     
     func setVolume(_ volume: Int32) {
-        mediaPlayer?.audio.volume = volume
+        // 옵셔널 체이닝으로 안전하게 볼륨 설정
+        mediaPlayer?.audio?.volume = volume
     }
     
     func isPlaying() -> Bool {
         return mediaPlayer?.isPlaying ?? false
     }
     
-    // 스냅샷 캡처
+    // 스냅샷 캡처 (대안 방법 사용)
     func captureSnapshot() -> UIImage? {
-        return mediaPlayer?.snapShot()
+        // VLCKit의 최신 버전에서는 takeSnapshot 메서드 사용
+        if let mediaPlayer = mediaPlayer {
+            // 뷰의 현재 상태를 UIImage로 캡처
+            UIGraphicsBeginImageContextWithOptions(bounds.size, false, UIScreen.main.scale)
+            defer { UIGraphicsEndImageContext() }
+            
+            if let context = UIGraphicsGetCurrentContext() {
+                layer.render(in: context)
+                return UIGraphicsGetImageFromCurrentImageContext()
+            }
+        }
+        return nil
     }
     
     // 저지연 옵션 업데이트
