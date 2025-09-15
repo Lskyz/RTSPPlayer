@@ -47,11 +47,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // VLC 로깅 설정
         configureVLCLogging()
         
-        // 네트워크 활동 표시기 설정
-        #if !targetEnvironment(macCatalyst)
-        UIApplication.shared.isNetworkActivityIndicatorVisible = false
-        #endif
-        
         // 화면 자동 잠금 방지 (비디오 재생 중)
         UIApplication.shared.isIdleTimerDisabled = true
         
@@ -82,14 +77,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
     
     private func configureVLCLogging() {
-        // VLC 로깅 레벨 설정 (디버그용)
+        // VLC 로깅 설정 (deprecated 메서드 제거)
         #if DEBUG
-        // 디버그 모드에서는 상세 로깅
-        VLCLibrary.shared().debugLogging = true
-        VLCLibrary.shared().debugLoggingLevel = 4
-        #else
-        // 릴리스 모드에서는 최소 로깅
-        VLCLibrary.shared().debugLogging = false
+        // 디버그 모드에서는 콘솔 로거 사용
+        let consoleLogger = VLCConsoleLogger()
+        VLCLibrary.shared().setLogger(consoleLogger)
         #endif
     }
 }
@@ -101,10 +93,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         // 씬 연결 시 초기 설정
-        guard let windowScene = (scene as? UIWindowScene) else { return }
+        guard let _ = (scene as? UIWindowScene) else { return }
         
-        // 상태바 스타일 설정
-        windowScene.statusBarManager?.statusBarStyle = .lightContent
+        // 상태바 스타일은 Info.plist에서 설정
     }
     
     func sceneDidDisconnect(_ scene: UIScene) {
