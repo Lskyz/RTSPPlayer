@@ -266,8 +266,25 @@ class RTSPPlayerUIView: UIView {
     }
     
     func captureSnapshot() -> UIImage? {
-        // VLC 3.6.0에서 snapShot -> snapshot으로 변경
-        return mediaPlayer?.snapshot()
+        // VLC 3.6.0에서 스냅샷 메서드 변경됨 - 대체 방법 사용
+        guard let mediaPlayer = mediaPlayer else { return nil }
+        
+        // VLC 3.6.0 호환 스냅샷 방법
+        if mediaPlayer.responds(to: Selector("takeSnapshot")) {
+            return mediaPlayer.perform(Selector("takeSnapshot"))?.takeUnretainedValue() as? UIImage
+        } else if mediaPlayer.responds(to: Selector("snapShot")) {
+            return mediaPlayer.perform(Selector("snapShot"))?.takeUnretainedValue() as? UIImage
+        } else {
+            // 스냅샷 기능이 없으면 현재 뷰를 캡처
+            return captureCurrentView()
+        }
+    }
+    
+    private func captureCurrentView() -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(size: bounds.size)
+        return renderer.image { _ in
+            drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
     }
     
     func updateLatencySettings(networkCaching: Int) {
