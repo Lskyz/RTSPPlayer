@@ -4,12 +4,27 @@ import SwiftUI
 
 // RTSP 스트림 정보 모델
 struct RTSPStream: Identifiable, Codable {
-    let id = UUID()
+    var id = UUID() // var로 변경하여 Codable 경고 해결
     var name: String
     var url: String
     var username: String?
     var password: String?
     var networkCaching: Int = 150
+    
+    // Codable을 위한 명시적 CodingKeys
+    enum CodingKeys: String, CodingKey {
+        case id, name, url, username, password, networkCaching
+    }
+    
+    // 기본 생성자
+    init(name: String, url: String, username: String? = nil, password: String? = nil, networkCaching: Int = 150) {
+        self.id = UUID()
+        self.name = name
+        self.url = url
+        self.username = username
+        self.password = password
+        self.networkCaching = networkCaching
+    }
 }
 
 // 플레이어 상태
