@@ -1,192 +1,144 @@
-import UIKit
-import SwiftUI
-import VLCKitSPM
-import AVKit
-
-// UIView 래퍼 for VLCMediaPlayer
-class RTSPPlayerUIView: UIView {
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 기본 앱 정보 -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
     
-    private var mediaPlayer: VLCMediaPlayer?
-    private var media: VLCMedia?
+    <!-- 백그라운드 모드 설정 (PiP를 위해 필요) -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+        <string>fetch</string>
+        <string>remote-notification</string>
+    </array>
     
-    // 저지연 설정 옵션
-    private let lowLatencyOptions = [
-        "network-caching": "150",        // 네트워크 캐싱 (ms)
-        "rtsp-caching": "150",           // RTSP 캐싱
-        "tcp-caching": "150",            // TCP 캐싱  
-        "realrtsp-caching": "150",       // Real RTSP 캐싱
-        "clock-jitter": "150",           // 클럭 지터
-        "rtsp-tcp": "",                  // TCP 사용 (UDP 대신)
-        "avcodec-hw": "none",            // 하드웨어 디코딩 비활성화 (저지연을 위해)
-        "clock-synchro": "0"             // 클럭 동기화 비활성화
-    ]
+    <!-- Picture in Picture 지원 -->
+    <key>NSSupportsAutomaticPictureInPicture</key>
+    <true/>
     
-    // PiP를 위한 AVPlayerLayer
-    var playerLayer: AVPlayerLayer?
+    <!-- 네트워크 권한 설정 (RTSP 스트리밍을 위해) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- HTTP 트래픽 허용 (RTSP는 기본적으로 암호화되지 않음) -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <key>NSAllowsArbitraryLoadsForMedia</key>
+        <true/>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+        <!-- 로컬 네트워크 접근 허용 -->
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
     
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupPlayer()
-    }
+    <!-- 로컬 네트워크 사용 권한 (iOS 14+) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>이 앱은 로컬 네트워크의 IP 카메라에 연결하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
     
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupPlayer()
-    }
+    <!-- Bonjour 서비스 (선택사항, 자동 장치 검색용) -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_rtsp._tcp</string>
+        <string>_http._tcp</string>
+    </array>
     
-    private func setupPlayer() {
-        backgroundColor = .black
-        
-        // VLC 미디어 플레이어 초기화
-        mediaPlayer = VLCMediaPlayer()
-        mediaPlayer?.drawable = self
-        
-        // 볼륨 설정 (옵셔널 체이닝 사용)
-        mediaPlayer?.audio?.volume = 100
-        
-        // VLC 로깅은 app.swift에서 전역적으로 설정
-    }
+    <!-- 멀티캐스트 권한 (iOS 14.5+, RTSP 멀티캐스트 스트림용) -->
+    <key>com.apple.developer.networking.multicast</key>
+    <true/>
     
-    func play(url: String, username: String? = nil, password: String? = nil) {
-        guard let mediaPlayer = mediaPlayer else { return }
-        
-        // RTSP URL 구성
-        var rtspURL = url
-        if let username = username, let password = password {
-            // 인증이 필요한 경우 URL에 포함
-            if let urlComponents = URLComponents(string: url) {
-                let components = urlComponents
-                var urlString = "\(components.scheme ?? "rtsp")://"
-                urlString += "\(username):\(password)@"
-                urlString += "\(components.host ?? "")"
-                if let port = components.port {
-                    urlString += ":\(port)"
-                }
-                urlString += components.path
-                rtspURL = urlString
-            }
-        }
-        
-        guard let url = URL(string: rtspURL) else {
-            print("Invalid URL: \(rtspURL)")
-            return
-        }
-        
-        // VLC Media 생성
-        media = VLCMedia(url: url)
-        
-        // 저지연 옵션 적용
-        for (key, value) in lowLatencyOptions {
-            if value.isEmpty {
-                media?.addOption("--\(key)")
-            } else {
-                media?.addOption("--\(key)=\(value)")
-            }
-        }
-        
-        // 추가 네트워크 옵션
-        media?.addOption("--intf=dummy")
-        media?.addOption("--no-audio-time-stretch")
-        media?.addOption("--no-network-synchronisation")
-        
-        // 미디어 설정 및 재생
-        mediaPlayer.media = media
-        mediaPlayer.play()
-        
-        print("RTSP Stream started: \(rtspURL)")
-    }
+    <!-- 앱 방향 설정 -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
     
-    func stop() {
-        mediaPlayer?.stop()
-        media = nil
-        print("RTSP Stream stopped")
-    }
+    <!-- iPad 방향 설정 -->
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
     
-    func pause() {
-        mediaPlayer?.pause()
-    }
+    <!-- 화면 자동 잠금 방지 (선택사항) -->
+    <key>UIRequiresFullScreen</key>
+    <false/>
     
-    func resume() {
-        mediaPlayer?.play()
-    }
+    <!-- SwiftUI 앱 설정 -->
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key>
+                    <string>Default Configuration</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
+    </dict>
     
-    func setVolume(_ volume: Int32) {
-        // 옵셔널 체이닝으로 안전하게 볼륨 설정
-        mediaPlayer?.audio?.volume = volume
-    }
+    <!-- 상태바 스타일 정적 설정 -->
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleLightContent</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
     
-    func isPlaying() -> Bool {
-        return mediaPlayer?.isPlaying ?? false
-    }
+    <!-- 앱 아이콘 -->
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+        </dict>
+    </dict>
     
-    // 스냅샷 캡처 (대안 방법 사용)
-    func captureSnapshot() -> UIImage? {
-        // VLCKit의 최신 버전에서는 takeSnapshot 메서드 사용
-        if let mediaPlayer = mediaPlayer {
-            // 뷰의 현재 상태를 UIImage로 캡처
-            UIGraphicsBeginImageContextWithOptions(bounds.size, false, UIScreen.main.scale)
-            defer { UIGraphicsEndImageContext() }
-            
-            if let context = UIGraphicsGetCurrentContext() {
-                layer.render(in: context)
-                return UIGraphicsGetImageFromCurrentImageContext()
-            }
-        }
-        return nil
-    }
+    <!-- 런치 스크린 -->
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
     
-    // 저지연 옵션 업데이트
-    func updateLatencySettings(networkCaching: Int) {
-        // 재생 중인 경우 중지하고 새 설정으로 재시작
-        if let currentMedia = media?.url?.absoluteString,
-           mediaPlayer?.isPlaying == true {
-            stop()
-            
-            // 새로운 캐싱 값으로 옵션 업데이트
-            var updatedOptions = lowLatencyOptions
-            updatedOptions["network-caching"] = "\(networkCaching)"
-            updatedOptions["rtsp-caching"] = "\(networkCaching)"
-            updatedOptions["tcp-caching"] = "\(networkCaching)"
-            updatedOptions["realrtsp-caching"] = "\(networkCaching)"
-            
-            // 재시작
-            play(url: currentMedia)
-        }
-    }
+    <!-- 앱이 요구하는 최소 iOS 버전 -->
+    <key>MinimumOSVersion</key>
+    <string>16.0</string>
     
-    deinit {
-        stop()
-        mediaPlayer = nil
-    }
-}
-
-// SwiftUI 래퍼
-struct RTSPPlayerView: UIViewRepresentable {
-    @Binding var url: String
-    @Binding var isPlaying: Bool
-    var username: String?
-    var password: String?
-    var networkCaching: Int = 150
+    <!-- 앱 카테고리 -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
     
-    func makeUIView(context: Context) -> RTSPPlayerUIView {
-        let playerView = RTSPPlayerUIView()
-        return playerView
-    }
-    
-    func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
-        if isPlaying {
-            if !uiView.isPlaying() {
-                uiView.play(url: url, username: username, password: password)
-            }
-        } else {
-            uiView.stop()
-        }
-        
-        // 캐싱 설정 업데이트
-        uiView.updateLatencySettings(networkCaching: networkCaching)
-    }
-    
-    static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: ()) {
-        uiView.stop()
-    }
-}
+    <!-- 파일 공유 활성화 (선택사항, 녹화 파일 저장용) -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+</dict>
+</plist>
