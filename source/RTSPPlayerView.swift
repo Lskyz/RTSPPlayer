@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import VLCKitSPM
+import VLCKit
 import AVKit
 
 // UIView 래퍼 for VLCMediaPlayer
