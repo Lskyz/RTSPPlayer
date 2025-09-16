@@ -1,6 +1,6 @@
 import SwiftUI
 import AVKit
-import VLCKit
+import VLCKitSPM
 
 @main
 struct RTSPPlayerApp: App {
