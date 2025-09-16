@@ -1,6 +1,6 @@
 import SwiftUI
 import AVKit
-import VLCKit
+import MobileVLCKit  // VLCKit 대신 MobileVLCKit 사용
 
 @main
 struct RTSPPlayerApp: App {
@@ -44,8 +44,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // 오디오 세션 설정 (백그라운드 재생 및 PiP를 위해)
         configureAudioSession()
         
-        // VLC 로깅 설정
-        configureVLCLogging()
+        // VLC 라이브러리 초기화
+        configureVLCLibrary()
         
         // 화면 자동 잠금 방지 (비디오 재생 중)
         UIApplication.shared.isIdleTimerDisabled = true
@@ -76,13 +76,27 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
     
-    private func configureVLCLogging() {
-        // VLC 로깅 설정 (deprecated 메서드 제거)
+    private func configureVLCLibrary() {
+        // VLC 라이브러리 초기화 및 로깅 설정
+        let vlcLibrary = VLCLibrary.shared()
+        
         #if DEBUG
-        // 디버그 모드에서는 콘솔 로거 사용
-        let consoleLogger = VLCConsoleLogger()
-        VLCLibrary.shared().setLogger(consoleLogger)
+        // 디버그 모드에서는 상세 로깅 활성화
+        if let consoleLogger = VLCConsoleLogger() {
+            vlcLibrary.setLogger(consoleLogger)
+        }
         #endif
+        
+        print("VLC Library initialized - Version: \(vlcLibrary.version ?? "Unknown")")
+        print("VLC Compiler: \(vlcLibrary.compiler ?? "Unknown")")
+        print("VLC Changeset: \(vlcLibrary.changeset ?? "Unknown")")
+        
+        // VLC 라이브러리가 제대로 로드되었는지 확인
+        if vlcLibrary.version != nil {
+            print("VLC Library loaded successfully")
+        } else {
+            print("Warning: VLC Library may not have loaded properly")
+        }
     }
 }
 
