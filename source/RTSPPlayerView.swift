@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import VLCKit
+import MobileVLCKit  // VLCKit 대신 MobileVLCKit 사용
 import AVKit
 
 // UIView 래퍼 for VLCMediaPlayer
@@ -41,14 +41,22 @@ class RTSPPlayerUIView: UIView {
         mediaPlayer = VLCMediaPlayer()
         mediaPlayer?.drawable = self
         
-        // 볼륨 설정 (옵셔널 체이닝 사용)
-        mediaPlayer?.audio?.volume = 100
+        // 볼륨 설정 (안전한 방식으로 수정)
+        if let audio = mediaPlayer?.audio {
+            audio.volume = 100
+        }
         
-        // VLC 로깅은 app.swift에서 전역적으로 설정
+        // VLCLibrary 초기화 확인 (MobileVLCKit에서 중요)
+        _ = VLCLibrary.shared()
+        
+        print("VLC Media Player initialized successfully")
     }
     
     func play(url: String, username: String? = nil, password: String? = nil) {
-        guard let mediaPlayer = mediaPlayer else { return }
+        guard let mediaPlayer = mediaPlayer else {
+            print("Media player not initialized")
+            return
+        }
         
         // RTSP URL 구성
         var rtspURL = url
@@ -72,47 +80,67 @@ class RTSPPlayerUIView: UIView {
             return
         }
         
+        print("Starting RTSP stream: \(rtspURL)")
+        
         // VLC Media 생성
         media = VLCMedia(url: url)
+        
+        guard let media = media else {
+            print("Failed to create VLC Media")
+            return
+        }
         
         // 저지연 옵션 적용
         for (key, value) in lowLatencyOptions {
             if value.isEmpty {
-                media?.addOption("--\(key)")
+                media.addOption("--\(key)")
             } else {
-                media?.addOption("--\(key)=\(value)")
+                media.addOption("--\(key)=\(value)")
             }
         }
         
         // 추가 네트워크 옵션
-        media?.addOption("--intf=dummy")
-        media?.addOption("--no-audio-time-stretch")
-        media?.addOption("--no-network-synchronisation")
+        media.addOption("--intf=dummy")
+        media.addOption("--no-audio-time-stretch")
+        media.addOption("--no-network-synchronisation")
         
         // 미디어 설정 및 재생
         mediaPlayer.media = media
-        mediaPlayer.play()
         
-        print("RTSP Stream started: \(rtspURL)")
+        // 재생 시작
+        let result = mediaPlayer.play()
+        if result {
+            print("RTSP Stream started successfully: \(rtspURL)")
+        } else {
+            print("Failed to start RTSP Stream: \(rtspURL)")
+        }
     }
     
     func stop() {
-        mediaPlayer?.stop()
+        guard let mediaPlayer = mediaPlayer else { return }
+        
+        mediaPlayer.stop()
         media = nil
         print("RTSP Stream stopped")
     }
     
     func pause() {
-        mediaPlayer?.pause()
+        guard let mediaPlayer = mediaPlayer else { return }
+        mediaPlayer.pause()
     }
     
     func resume() {
-        mediaPlayer?.play()
+        guard let mediaPlayer = mediaPlayer else { return }
+        mediaPlayer.play()
     }
     
     func setVolume(_ volume: Int32) {
-        // 옵셔널 체이닝으로 안전하게 볼륨 설정
-        mediaPlayer?.audio?.volume = volume
+        // 안전한 볼륨 설정
+        guard let mediaPlayer = mediaPlayer,
+              let audio = mediaPlayer.audio else { return }
+        
+        let clampedVolume = max(0, min(200, volume)) // 0-200 범위로 제한
+        audio.volume = clampedVolume
     }
     
     func isPlaying() -> Bool {
@@ -121,42 +149,43 @@ class RTSPPlayerUIView: UIView {
     
     // 스냅샷 캡처 (대안 방법 사용)
     func captureSnapshot() -> UIImage? {
+        guard let mediaPlayer = mediaPlayer else { return nil }
+        
         // VLCKit의 최신 버전에서는 takeSnapshot 메서드 사용
-        if let mediaPlayer = mediaPlayer {
-            // 뷰의 현재 상태를 UIImage로 캡처
-            UIGraphicsBeginImageContextWithOptions(bounds.size, false, UIScreen.main.scale)
-            defer { UIGraphicsEndImageContext() }
-            
-            if let context = UIGraphicsGetCurrentContext() {
-                layer.render(in: context)
-                return UIGraphicsGetImageFromCurrentImageContext()
-            }
+        // 뷰의 현재 상태를 UIImage로 캡처
+        UIGraphicsBeginImageContextWithOptions(bounds.size, false, UIScreen.main.scale)
+        defer { UIGraphicsEndImageContext() }
+        
+        if let context = UIGraphicsGetCurrentContext() {
+            layer.render(in: context)
+            return UIGraphicsGetImageFromCurrentImageContext()
         }
+        
         return nil
     }
     
     // 저지연 옵션 업데이트
     func updateLatencySettings(networkCaching: Int) {
-        // 재생 중인 경우 중지하고 새 설정으로 재시작
-        if let currentMedia = media?.url?.absoluteString,
-           mediaPlayer?.isPlaying == true {
+        // 현재 재생 중인 미디어의 URL 저장
+        guard let currentMedia = media,
+              let currentURL = currentMedia.url?.absoluteString else { return }
+        
+        let wasPlaying = mediaPlayer?.isPlaying ?? false
+        
+        if wasPlaying {
             stop()
             
-            // 새로운 캐싱 값으로 옵션 업데이트
-            var updatedOptions = lowLatencyOptions
-            updatedOptions["network-caching"] = "\(networkCaching)"
-            updatedOptions["rtsp-caching"] = "\(networkCaching)"
-            updatedOptions["tcp-caching"] = "\(networkCaching)"
-            updatedOptions["realrtsp-caching"] = "\(networkCaching)"
-            
-            // 재시작
-            play(url: currentMedia)
+            // 약간의 지연 후 재시작
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.play(url: currentURL)
+            }
         }
     }
     
     deinit {
         stop()
         mediaPlayer = nil
+        print("RTSPPlayerUIView deinitialized")
     }
 }
 
@@ -174,16 +203,19 @@ struct RTSPPlayerView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
+        // URL이 변경되었거나 재생 상태가 변경된 경우에만 업데이트
         if isPlaying {
-            if !uiView.isPlaying() {
+            if !uiView.isPlaying() && !url.isEmpty {
                 uiView.play(url: url, username: username, password: password)
             }
         } else {
-            uiView.stop()
+            if uiView.isPlaying() {
+                uiView.pause()
+            }
         }
         
-        // 캐싱 설정 업데이트
-        uiView.updateLatencySettings(networkCaching: networkCaching)
+        // 캐싱 설정 업데이트 (필요시에만)
+        // uiView.updateLatencySettings(networkCaching: networkCaching)
     }
     
     static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: ()) {
