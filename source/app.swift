@@ -1,6 +1,6 @@
 import SwiftUI
 import AVKit
-import MobileVLCKit  // VLCKit 대신 MobileVLCKit 사용
+import VLCKit  // VLCKit 대신 MobileVLCKit 사용
 
 @main
 struct RTSPPlayerApp: App {
