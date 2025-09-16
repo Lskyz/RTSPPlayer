@@ -10,6 +10,8 @@ struct ContentView: View {
     @State private var newStreamURL = ""
     @State private var newStreamUsername = ""
     @State private var newStreamPassword = ""
+    @State private var showStreamInfo = false
+    @State private var currentStreamInfo: [String: Any] = [:]
     
     var body: some View {
         NavigationView {
@@ -41,6 +43,9 @@ struct ContentView: View {
             }
             .sheet(isPresented: $viewModel.showSettings) {
                 settingsView
+            }
+            .sheet(isPresented: $showStreamInfo) {
+                streamInfoView
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -76,6 +81,22 @@ struct ContentView: View {
                                 .lineLimit(1)
                         }
                     }
+                    
+                    // Enhanced PiP 상태 표시
+                    if pipManager.isPiPSupported {
+                        HStack {
+                            Text("Enhanced PiP:")
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(pipManager.isPiPActive ? Color.green : (pipManager.isPiPPossible ? Color.orange : Color.gray))
+                                    .frame(width: 8, height: 8)
+                                Text(pipStatusText)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -102,6 +123,10 @@ struct ContentView: View {
                 )
                 .aspectRatio(16/9, contentMode: .fit)
                 .background(Color.black)
+                .onTapGesture(count: 2) {
+                    // 더블 탭으로 PiP 토글
+                    pipManager.togglePiP()
+                }
                 
                 // 컨트롤러
                 playerControls
@@ -125,22 +150,42 @@ struct ContentView: View {
             
             Spacer()
             
-            Text(viewModel.selectedStream?.name ?? "스트림")
-                .font(.headline)
-                .foregroundColor(.white)
+            VStack(spacing: 2) {
+                Text(viewModel.selectedStream?.name ?? "스트림")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                // 스트림 품질 정보 표시
+                if let stream = viewModel.selectedStream {
+                    Text(getStreamQualityText(for: stream))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+            }
             
             Spacer()
             
-            // PiP 버튼
-            if pipManager.isPiPSupported {
+            HStack(spacing: 16) {
+                // 스트림 정보 버튼
                 Button(action: {
-                    pipManager.togglePiP()
+                    showStreamInfo = true
                 }) {
-                    Image(systemName: pipManager.isPiPActive ? "pip.exit" : "pip.enter")
+                    Image(systemName: "info.circle")
                         .font(.title2)
-                        .foregroundColor(pipManager.isPiPPossible ? .white : .gray)
+                        .foregroundColor(.white)
                 }
-                .disabled(!pipManager.isPiPPossible)
+                
+                // Enhanced PiP 버튼
+                if pipManager.isPiPSupported {
+                    Button(action: {
+                        pipManager.togglePiP()
+                    }) {
+                        Image(systemName: getPiPButtonIcon())
+                            .font(.title2)
+                            .foregroundColor(pipManager.isPiPPossible ? .white : .gray)
+                    }
+                    .disabled(!pipManager.isPiPPossible)
+                }
             }
         }
         .padding()
@@ -184,11 +229,24 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // 지연 설정
+            // Enhanced 지연 설정 with 코덱 최적화
             VStack(alignment: .leading, spacing: 8) {
-                Text("지연 설정: \(viewModel.selectedLatencyPreset.rawValue)")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+                HStack {
+                    Text("지연 설정: \(viewModel.selectedLatencyPreset.rawValue)")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                    
+                    // 코덱 정보 표시
+                    Text("H.264/H.265 최적화")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.2))
+                        .cornerRadius(4)
+                        .foregroundColor(.blue)
+                }
                 
                 Picker("지연 설정", selection: $viewModel.selectedLatencyPreset) {
                     ForEach(RTSPViewModel.LatencyPreset.allCases, id: \.self) { preset in
@@ -201,6 +259,33 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal)
+            
+            // PiP 상태 표시
+            if pipManager.isPiPSupported {
+                HStack {
+                    Image(systemName: "pip")
+                        .foregroundColor(.blue)
+                    
+                    Text("Enhanced PiP: \(pipStatusText)")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                    
+                    if pipManager.isPiPPossible {
+                        Button("토글") {
+                            pipManager.togglePiP()
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.2))
+                        .cornerRadius(4)
+                        .foregroundColor(.blue)
+                    }
+                }
+                .padding(.horizontal)
+            }
         }
         .padding()
         .background(Color.black.opacity(0.8))
@@ -221,6 +306,21 @@ struct ContentView: View {
                     TextField("사용자명", text: $newStreamUsername)
                         .autocapitalization(.none)
                     SecureField("비밀번호", text: $newStreamPassword)
+                }
+                
+                Section(header: Text("Enhanced PiP 설정")) {
+                    HStack {
+                        Text("PiP 지원")
+                        Spacer()
+                        Text(pipManager.isPiPSupported ? "지원됨" : "지원 안됨")
+                            .foregroundColor(pipManager.isPiPSupported ? .green : .red)
+                    }
+                    
+                    if pipManager.isPiPSupported {
+                        Text("H.264/H.265 스트림에서 Enhanced PiP를 지원합니다.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 Section {
@@ -260,7 +360,7 @@ struct ContentView: View {
                     }
                 }
                 
-                Section(header: Text("PiP 설정")) {
+                Section(header: Text("Enhanced PiP 설정")) {
                     HStack {
                         Text("PiP 지원")
                         Spacer()
@@ -272,9 +372,50 @@ struct ContentView: View {
                         HStack {
                             Text("PiP 상태")
                             Spacer()
-                            Text(pipManager.isPiPActive ? "활성" : "비활성")
+                            Text(pipStatusText)
                                 .foregroundColor(pipManager.isPiPActive ? .green : .gray)
                         }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enhanced Features")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            
+                            Text("• H.264/H.265 하드웨어 디코딩")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Text("• 저지연 스트리밍 최적화")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Text("• 실시간 프레임 추출")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Section(header: Text("코덱 지원")) {
+                    HStack {
+                        Text("H.264 지원")
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    }
+                    
+                    HStack {
+                        Text("H.265 지원")
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    }
+                    
+                    HStack {
+                        Text("하드웨어 디코딩")
+                        Spacer()
+                        Text("VideoToolbox")
+                            .foregroundColor(.blue)
                     }
                 }
                 
@@ -282,15 +423,22 @@ struct ContentView: View {
                     HStack {
                         Text("버전")
                         Spacer()
-                        Text("1.0.0")
+                        Text("1.1.0")
                             .foregroundColor(.gray)
                     }
                     
                     HStack {
                         Text("VLCKit 버전")
                         Spacer()
-                        Text("3.5.1")
+                        Text("3.6.0")
                             .foregroundColor(.gray)
+                    }
+                    
+                    HStack {
+                        Text("Enhanced PiP")
+                        Spacer()
+                        Text("활성화됨")
+                            .foregroundColor(.green)
                     }
                 }
             }
@@ -299,6 +447,73 @@ struct ContentView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("완료") {
                         viewModel.showSettings = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Stream Info View
+    private var streamInfoView: some View {
+        NavigationView {
+            Form {
+                if let stream = viewModel.selectedStream {
+                    Section(header: Text("스트림 정보")) {
+                        HStack {
+                            Text("이름")
+                            Spacer()
+                            Text(stream.name)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Text("URL")
+                            Spacer()
+                            Text(stream.url)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
+                        
+                        HStack {
+                            Text("품질")
+                            Spacer()
+                            Text(getStreamQualityText(for: stream))
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    
+                    Section(header: Text("네트워크 정보")) {
+                        HStack {
+                            Text("캐싱 설정")
+                            Spacer()
+                            Text("\(stream.networkCaching) ms")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Text("프로토콜")
+                            Spacer()
+                            Text("RTSP")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if stream.username != nil {
+                            HStack {
+                                Text("인증")
+                                Spacer()
+                                Text("필요")
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("스트림 정보")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("완료") {
+                        showStreamInfo = false
                     }
                 }
             }
@@ -345,9 +560,41 @@ struct ContentView: View {
         case .error: return .red
         }
     }
+    
+    private var pipStatusText: String {
+        if pipManager.isPiPActive {
+            return "활성"
+        } else if pipManager.isPiPPossible {
+            return "준비됨"
+        } else {
+            return "대기 중"
+        }
+    }
+    
+    private func getPiPButtonIcon() -> String {
+        if pipManager.isPiPActive {
+            return "pip.exit"
+        } else {
+            return "pip.enter"
+        }
+    }
+    
+    private func getStreamQualityText(for stream: RTSPStream) -> String {
+        // URL에서 품질 힌트 추출
+        let url = stream.url.lowercased()
+        if url.contains("4k") || url.contains("2160") {
+            return "4K UHD"
+        } else if url.contains("1080") || url.contains("hd") {
+            return "Full HD"
+        } else if url.contains("720") {
+            return "HD"
+        } else {
+            return "SD"
+        }
+    }
 }
 
-// MARK: - Stream Row View
+// MARK: - Enhanced Stream Row View
 struct StreamRowView: View {
     let stream: RTSPStream
     let action: () -> Void
@@ -365,10 +612,28 @@ struct StreamRowView: View {
                         .foregroundColor(.gray)
                         .lineLimit(1)
                     
-                    if stream.username != nil {
-                        Label("인증 필요", systemImage: "lock.fill")
+                    HStack(spacing: 8) {
+                        if stream.username != nil {
+                            Label("인증", systemImage: "lock.fill")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                        
+                        // 지연 설정 표시
+                        Text("\(stream.networkCaching)ms")
                             .font(.caption2)
-                            .foregroundColor(.orange)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(3)
+                            .foregroundColor(.blue)
+                        
+                        // Enhanced PiP 지원 표시
+                        if PictureInPictureManager.shared.isPiPSupported {
+                            Image(systemName: "pip")
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                        }
                     }
                 }
                 
