@@ -7,45 +7,27 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0528025503D3770E2AB9BE56 /* Pods_RTSPPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C246C11B6D65DE091E941C18 /* Pods_RTSPPlayer.framework */; };
 		334016152E782F8B00233EAA /* app.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016142E782F8B00233EAA /* app.swift */; };
 		334016162E782F8B00233EAA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016172E782F8B00233EAA /* ContentView.swift */; };
 		334016182E782F8B00233EAA /* RTSPViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016192E782F8B00233EAA /* RTSPViewModel.swift */; };
 		334016202E782F8B00233EAA /* RTSPPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016212E782F8B00233EAA /* RTSPPlayerView.swift */; };
 		334016222E782F8B00233EAA /* PictureInPictureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016232E782F8B00233EAA /* PictureInPictureManager.swift */; };
 		334016242E782F8B00233EAA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 334016252E782F8B00233EAA /* Assets.xcassets */; };
-		334016262E782F8B00233EAA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 334016272E782F8B00233EAA /* Preview Assets.xcassets */; };
-		3340161C2E78307600233EAA /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 3340161B2E78307600233EAA /* VLCKitSPM */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXContainerItemProxy section */
-		334015F62E782E5500233EAA /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 334015DD2E782E5100233EAA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 334015E42E782E5100233EAA;
-			remoteInfo = RTSPPlayer;
-		};
-		334016002E782E5500233EAA /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 334015DD2E782E5100233EAA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 334015E42E782E5100233EAA;
-			remoteInfo = RTSPPlayer;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		334015E52E782E5100233EAA /* RTSPPlayer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RTSPPlayer.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		334015F52E782E5500233EAA /* RTSPPlayerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RTSPPlayerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		334015FF2E782E5500233EAA /* RTSPPlayerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RTSPPlayerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		334016142E782F8B00233EAA /* app.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = app.swift; sourceTree = "<group>"; };
 		334016172E782F8B00233EAA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		334016192E782F8B00233EAA /* RTSPViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTSPViewModel.swift; sourceTree = "<group>"; };
 		334016212E782F8B00233EAA /* RTSPPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTSPPlayerView.swift; sourceTree = "<group>"; };
 		334016232E782F8B00233EAA /* PictureInPictureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PictureInPictureManager.swift; sourceTree = "<group>"; };
 		334016252E782F8B00233EAA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		334016272E782F8B00233EAA /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		334016282E782F8B00233EAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3D9B4062D3DC43B81386C0BC /* Pods-RTSPPlayer.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RTSPPlayer.debug.xcconfig"; path = "Target Support Files/Pods-RTSPPlayer/Pods-RTSPPlayer.debug.xcconfig"; sourceTree = "<group>"; };
+		C246C11B6D65DE091E941C18 /* Pods_RTSPPlayer.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RTSPPlayer.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		C562EE39CD4621AD381EF0BC /* Pods-RTSPPlayer.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RTSPPlayer.release.xcconfig"; path = "Target Support Files/Pods-RTSPPlayer/Pods-RTSPPlayer.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,21 +35,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3340161C2E78307600233EAA /* VLCKitSPM in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		334015F22E782E5500233EAA /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		334015FC2E782E5500233EAA /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
+				0528025503D3770E2AB9BE56 /* Pods_RTSPPlayer.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,8 +45,10 @@
 		334015DC2E782E5100233EAA = {
 			isa = PBXGroup;
 			children = (
-				334015E72E782E5100233EAA /* RTSPPlayer */,
+				334015E72E782E5100233EAA /* source */,
 				334015E62E782E5100233EAA /* Products */,
+				D34696EF8A56E30F4D6369EC /* Pods */,
+				46C0B5B6F7F405BCD27C0EEC /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -86,13 +56,11 @@
 			isa = PBXGroup;
 			children = (
 				334015E52E782E5100233EAA /* RTSPPlayer.app */,
-				334015F52E782E5500233EAA /* RTSPPlayerTests.xctest */,
-				334015FF2E782E5500233EAA /* RTSPPlayerUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		334015E72E782E5100233EAA /* RTSPPlayer */ = {
+		334015E72E782E5100233EAA /* source */ = {
 			isa = PBXGroup;
 			children = (
 				334016142E782F8B00233EAA /* app.swift */,
@@ -102,17 +70,25 @@
 				334016232E782F8B00233EAA /* PictureInPictureManager.swift */,
 				334016252E782F8B00233EAA /* Assets.xcassets */,
 				334016282E782F8B00233EAA /* Info.plist */,
-				334016292E782F8B00233EAA /* Preview Content */,
 			);
 			path = source;
 			sourceTree = "<group>";
 		};
-		334016292E782F8B00233EAA /* Preview Content */ = {
+		46C0B5B6F7F405BCD27C0EEC /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				334016272E782F8B00233EAA /* Preview Assets.xcassets */,
+				C246C11B6D65DE091E941C18 /* Pods_RTSPPlayer.framework */,
 			);
-			path = "Preview Content";
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		D34696EF8A56E30F4D6369EC /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				3D9B4062D3DC43B81386C0BC /* Pods-RTSPPlayer.debug.xcconfig */,
+				C562EE39CD4621AD381EF0BC /* Pods-RTSPPlayer.release.xcconfig */,
+			);
+			path = Pods;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -122,57 +98,20 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 334016092E782E5500233EAA /* Build configuration list for PBXNativeTarget "RTSPPlayer" */;
 			buildPhases = (
+				358C4290F28843AA58C12C3F /* [CP] Check Pods Manifest.lock */,
 				334015E12E782E5100233EAA /* Sources */,
 				334015E22E782E5100233EAA /* Frameworks */,
 				334015E32E782E5100233EAA /* Resources */,
+				91AA2926C9FB1C5FD0D7C624 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = RTSPPlayer;
-			packageProductDependencies = (
-				3340161B2E78307600233EAA /* VLCKitSPM */,
-			);
 			productName = RTSPPlayer;
 			productReference = 334015E52E782E5100233EAA /* RTSPPlayer.app */;
 			productType = "com.apple.product-type.application";
-		};
-		334015F42E782E5500233EAA /* RTSPPlayerTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 3340160C2E782E5500233EAA /* Build configuration list for PBXNativeTarget "RTSPPlayerTests" */;
-			buildPhases = (
-				334015F12E782E5500233EAA /* Sources */,
-				334015F22E782E5500233EAA /* Frameworks */,
-				334015F32E782E5500233EAA /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				334015F72E782E5500233EAA /* PBXTargetDependency */,
-			);
-			name = RTSPPlayerTests;
-			productName = RTSPPlayerTests;
-			productReference = 334015F52E782E5500233EAA /* RTSPPlayerTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		334015FE2E782E5500233EAA /* RTSPPlayerUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 3340160F2E782E5500233EAA /* Build configuration list for PBXNativeTarget "RTSPPlayerUITests" */;
-			buildPhases = (
-				334015FB2E782E5500233EAA /* Sources */,
-				334015FC2E782E5500233EAA /* Frameworks */,
-				334015FD2E782E5500233EAA /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				334016012E782E5500233EAA /* PBXTargetDependency */,
-			);
-			name = RTSPPlayerUITests;
-			productName = RTSPPlayerUITests;
-			productReference = 334015FF2E782E5500233EAA /* RTSPPlayerUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
@@ -187,14 +126,6 @@
 					334015E42E782E5100233EAA = {
 						CreatedOnToolsVersion = 15.2;
 					};
-					334015F42E782E5500233EAA = {
-						CreatedOnToolsVersion = 15.2;
-						TestTargetID = 334015E42E782E5100233EAA;
-					};
-					334015FE2E782E5500233EAA = {
-						CreatedOnToolsVersion = 15.2;
-						TestTargetID = 334015E42E782E5100233EAA;
-					};
 				};
 			};
 			buildConfigurationList = 334015E02E782E5100233EAA /* Build configuration list for PBXProject "RTSPPlayer" */;
@@ -206,16 +137,11 @@
 				Base,
 			);
 			mainGroup = 334015DC2E782E5100233EAA;
-			packageReferences = (
-				3340161A2E78307600233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */,
-			);
 			productRefGroup = 334015E62E782E5100233EAA /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				334015E42E782E5100233EAA /* RTSPPlayer */,
-				334015F42E782E5500233EAA /* RTSPPlayerTests */,
-				334015FE2E782E5500233EAA /* RTSPPlayerUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -225,26 +151,53 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				334016262E782F8B00233EAA /* Preview Assets.xcassets in Resources */,
 				334016242E782F8B00233EAA /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		334015F32E782E5500233EAA /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		334015FD2E782E5500233EAA /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		358C4290F28843AA58C12C3F /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-RTSPPlayer-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		91AA2926C9FB1C5FD0D7C624 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-RTSPPlayer/Pods-RTSPPlayer-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-RTSPPlayer/Pods-RTSPPlayer-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RTSPPlayer/Pods-RTSPPlayer-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		334015E12E782E5100233EAA /* Sources */ = {
@@ -259,34 +212,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		334015F12E782E5500233EAA /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		334015FB2E782E5500233EAA /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		334015F72E782E5500233EAA /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 334015E42E782E5100233EAA /* RTSPPlayer */;
-			targetProxy = 334015F62E782E5500233EAA /* PBXContainerItemProxy */;
-		};
-		334016012E782E5500233EAA /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 334015E42E782E5100233EAA /* RTSPPlayer */;
-			targetProxy = 334016002E782E5500233EAA /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		334016072E782E5500233EAA /* Debug */ = {
@@ -300,6 +226,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_ASSIGN_ENUM = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_COMMA = YES;
@@ -363,6 +290,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_ASSIGN_ENUM = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_COMMA = YES;
@@ -410,6 +338,7 @@
 		};
 		3340160A2E782E5500233EAA /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3D9B4062D3DC43B81386C0BC /* Pods-RTSPPlayer.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -441,6 +370,7 @@
 		};
 		3340160B2E782E5500233EAA /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C562EE39CD4621AD381EF0BC /* Pods-RTSPPlayer.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -470,74 +400,6 @@
 			};
 			name = Release;
 		};
-		3340160D2E782E5500233EAA /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sky.RTSPPlayer.RTSPPlayerTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RTSPPlayer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/RTSPPlayer";
-			};
-			name = Debug;
-		};
-		3340160E2E782E5500233EAA /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sky.RTSPPlayer.RTSPPlayerTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RTSPPlayer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/RTSPPlayer";
-			};
-			name = Release;
-		};
-		334016102E782E5500233EAA /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sky.RTSPPlayer.RTSPPlayerUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = RTSPPlayer;
-			};
-			name = Debug;
-		};
-		334016112E782E5500233EAA /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sky.RTSPPlayer.RTSPPlayerUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = RTSPPlayer;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -559,44 +421,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3340160C2E782E5500233EAA /* Build configuration list for PBXNativeTarget "RTSPPlayerTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				3340160D2E782E5500233EAA /* Debug */,
-				3340160E2E782E5500233EAA /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		3340160F2E782E5500233EAA /* Build configuration list for PBXNativeTarget "RTSPPlayerUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				334016102E782E5500233EAA /* Debug */,
-				334016112E782E5500233EAA /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		3340161A2E78307600233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/tylerjonesio/vlckit-spm";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.6.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		3340161B2E78307600233EAA /* VLCKitSPM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3340161A2E78307600233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */;
-			productName = VLCKitSPM;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 334015DD2E782E5100233EAA /* Project object */;
 }
