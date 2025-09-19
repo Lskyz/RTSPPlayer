@@ -106,9 +106,8 @@ class RTSPPlayerUIView: UIView {
     private func configureVLCPlayer() {
         guard let player = mediaPlayer else { return }
         
-        // Force VLC to use the container view's bounds
+        // Configure video aspect ratio and scaling
         player.videoAspectRatio = nil // Let VLC auto-detect
-        player.videoScale = 0 // Fit to view
         
         // Enable hardware decoding
         if let videoView = videoContainerView {
@@ -131,12 +130,9 @@ class RTSPPlayerUIView: UIView {
         
         // Force VLC to redraw if playing
         if let player = mediaPlayer, player.isPlaying {
-            // Trigger a redraw by temporarily changing the video scale
-            let currentScale = player.videoScale
-            player.videoScale = currentScale == 0 ? 1 : 0
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                player.videoScale = 0 // Reset to fit
+            // Trigger a layout update
+            DispatchQueue.main.async {
+                player.drawable = self.videoContainerView
             }
         }
     }
