@@ -572,7 +572,7 @@ struct ContentView: View {
         .padding(.horizontal)
     }
     
-    // MARK: - Add Stream View (동일하게 유지)
+    // MARK: - Add Stream View
     private var addStreamView: some View {
         NavigationView {
             Form {
