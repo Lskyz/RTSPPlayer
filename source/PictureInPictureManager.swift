@@ -100,6 +100,13 @@ class PictureInPictureManager: NSObject, ObservableObject {
         } else {
             setupLegacyPiPController()
         }
+        
+        // Wait for player to be stable before starting frame extraction
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            if vlcPlayer.isPlaying {
+                print("VLC player is playing, ready for PiP")
+            }
+        }
     }
     
     private func setupDisplayLayer(in containerView: UIView) {
@@ -278,6 +285,28 @@ class PictureInPictureManager: NSObject, ObservableObject {
     deinit {
         cleanup()
     }
+    
+    // MARK: - Integration Helper Properties
+    
+    var canStartPiP: Bool {
+        let canStart = isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
+        print("Can start PiP: \(canStart) (Supported: \(isPiPSupported), Possible: \(isPiPPossible), Active: \(isPiPActive), Playing: \(vlcPlayer?.isPlaying ?? false))")
+        return canStart
+    }
+    
+    var pipStatus: String {
+        if !isPiPSupported {
+            return "Not Supported"
+        } else if isPiPActive {
+            return "Active"
+        } else if isPiPPossible {
+            return "Ready"
+        } else if vlcPlayer?.isPlaying ?? false {
+            return "Preparing"
+        } else {
+            return "Inactive"
+        }
+    }
 }
 
 // MARK: - Improved VLC Frame Extractor
@@ -286,7 +315,8 @@ class VLCFrameExtractor: NSObject {
     weak var delegate: VLCFrameExtractionDelegate?
     private var containerView: UIView
     
-    private var isExtracting = false
+    // Make isExtracting public to fix the access error
+    var isExtracting = false
     private var extractionTimer: Timer?
     private let extractionQueue = DispatchQueue(label: "com.rtspplayer.extraction", qos: .userInteractive)
     
@@ -367,8 +397,8 @@ class VLCFrameExtractor: NSObject {
         snapshotCounter += 1
         let snapshotPath = "\(documentsPath)vlc_frame_\(snapshotCounter).png"
         
-        // Take snapshot from VLC
-        player.saveVideoSnapshotAt(snapshotPath, withWidth: 1920, andHeight: 1080)
+        // Use the corrected method name
+        player.saveVideoSnapshot(at: snapshotPath, withWidth: 1920, andHeight: 1080)
         
         // Wait a bit for file to be written
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -698,47 +728,5 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
                                    completion completionHandler: @escaping () -> Void) {
         print("Skip not supported for live stream")
         completionHandler()
-    }
-}
-
-// MARK: - Integration Helper
-extension PictureInPictureManager {
-    
-    func connectToVLCPlayer(_ player: VLCMediaPlayer, containerView: UIView) {
-        connectToVLCPlayer(player, containerView: containerView)
-        
-        // Wait for player to be stable before starting frame extraction
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            if player.isPlaying {
-                print("VLC player is playing, ready for PiP")
-            }
-        }
-    }
-    
-    var canStartPiP: Bool {
-        let canStart = isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
-        print("Can start PiP: \(canStart) (Supported: \(isPiPSupported), Possible: \(isPiPPossible), Active: \(isPiPActive), Playing: \(vlcPlayer?.isPlaying ?? false))")
-        return canStart
-    }
-    
-    var pipStatus: String {
-        if !isPiPSupported {
-            return "Not Supported"
-        } else if isPiPActive {
-            return "Active"
-        } else if isPiPPossible {
-            return "Ready"
-        } else if vlcPlayer?.isPlaying ?? false {
-            return "Preparing"
-        } else {
-            return "Inactive"
-        }
-    }
-}
-
-// MARK: - VLCFrameExtractor Extension
-extension VLCFrameExtractor {
-    var isExtracting: Bool {
-        return extractionTimer != nil
     }
 }
