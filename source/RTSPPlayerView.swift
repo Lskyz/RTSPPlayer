@@ -108,7 +108,7 @@ class RTSPPlayerUIView: UIView {
         guard let username = username, let password = password else { return url }
         
         if let urlComponents = URLComponents(string: url) {
-            var components = urlComponents
+            let components = urlComponents  // Changed from var to let
             var urlString = "\(components.scheme ?? "rtsp")://"
             urlString += "\(username):\(password)@"
             urlString += "\(components.host ?? "")"
@@ -222,8 +222,9 @@ class RTSPPlayerUIView: UIView {
         info.resolution = CGSize(width: CGFloat(videoSize.width), height: CGFloat(videoSize.height))
         info.videoCodec = detectVideoCodec()
         
-        // Audio info
-        if let audioTrack = mediaPlayer.audioTrackNames?.first as? String {
+        // Audio info - Fixed: audioTrackNames is not optional
+        if let audioTracks = mediaPlayer.audioTrackNames as? [String],
+           let audioTrack = audioTracks.first {
             info.audioTrack = audioTrack
         }
         
@@ -308,9 +309,11 @@ class RTSPPlayerUIView: UIView {
 // MARK: - VLCMediaPlayerDelegate
 extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     
-    func mediaPlayerStateChanged(_ aNotification: Notification!) {
+    // Fixed: Changed parameter from Notification! to Notification to match protocol
+    func mediaPlayerStateChanged(_ aNotification: Notification) {
         guard let player = aNotification.object as? VLCMediaPlayer else { return }
         
+        // Fixed: Made switch exhaustive by adding .esAdded case
         switch player.state {
         case .opening:
             print("VLC: Opening stream...")
@@ -347,12 +350,17 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
             print("VLC: Ended")
             streamInfo?.state = "Ended"
             
+        case .esAdded:
+            print("VLC: Elementary stream added")
+            streamInfo?.state = "ES Added"
+            
         @unknown default:
             print("VLC: Unknown state")
         }
     }
     
-    func mediaPlayerTimeChanged(_ aNotification: Notification!) {
+    // Fixed: Changed parameter from Notification! to Notification to match protocol
+    func mediaPlayerTimeChanged(_ aNotification: Notification) {
         // Update time info
         if let player = aNotification.object as? VLCMediaPlayer {
             streamInfo?.time = TimeInterval(player.time.intValue / 1000)
