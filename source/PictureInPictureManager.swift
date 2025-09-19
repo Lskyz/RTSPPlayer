@@ -16,7 +16,7 @@ protocol PictureInPictureManagerDelegate: AnyObject {
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
 }
 
-// MARK: - Enhanced PiP Manager with Independent Player
+// MARK: - Enhanced PiP Manager with Proper Frame Extraction
 class PictureInPictureManager: NSObject, ObservableObject {
     
     // Singleton
@@ -32,17 +32,10 @@ class PictureInPictureManager: NSObject, ObservableObject {
     private var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer?
     private var displayLayerView: UIView?
     
-    // VLC Components - 독립적인 PiP용 플레이어
-    private var mainVLCPlayer: VLCMediaPlayer?  // 메인 플레이어 참조용
-    private var pipVLCPlayer: VLCMediaPlayer?   // PiP 전용 플레이어
+    // VLC Components
+    private var vlcPlayer: VLCMediaPlayer?
     private var frameExtractor: VLCFrameExtractor?
     private var containerView: UIView?
-    
-    // 스트림 정보 저장
-    private var currentStreamURL: String?
-    private var streamUsername: String?
-    private var streamPassword: String?
-    private var networkCaching: Int = 150
     
     // Delegate
     weak var delegate: PictureInPictureManagerDelegate?
@@ -87,22 +80,19 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - 독립적인 PiP 설정
+    // MARK: - Sample Buffer PiP Setup
     
     func connectToVLCPlayer(_ vlcPlayer: VLCMediaPlayer, containerView: UIView) {
         cleanup()
         
-        self.mainVLCPlayer = vlcPlayer
+        self.vlcPlayer = vlcPlayer
         self.containerView = containerView
-        
-        // 현재 스트림 정보 저장
-        if let media = vlcPlayer.media {
-            self.currentStreamURL = media.url?.absoluteString
-            // 추가 스트림 정보가 필요하면 여기서 추출
-        }
         
         // Create display layer and view
         setupDisplayLayer(in: containerView)
+        
+        // Setup frame extractor with improved method
+        setupFrameExtractor()
         
         // Setup PiP controller
         if #available(iOS 15.0, *) {
@@ -111,15 +101,12 @@ class PictureInPictureManager: NSObject, ObservableObject {
             setupLegacyPiPController()
         }
         
-        print("PiP Manager connected to main VLC player")
-    }
-    
-    // 스트림 정보 설정 메소드 추가
-    func setStreamInfo(url: String, username: String? = nil, password: String? = nil, caching: Int = 150) {
-        self.currentStreamURL = url
-        self.streamUsername = username
-        self.streamPassword = password
-        self.networkCaching = caching
+        // Wait for player to be stable before starting frame extraction
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            if vlcPlayer.isPlaying {
+                print("VLC player is playing, ready for PiP")
+            }
+        }
     }
     
     private func setupDisplayLayer(in containerView: UIView) {
@@ -135,11 +122,11 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayer.backgroundColor = UIColor.black.cgColor
         displayLayer.frame = containerView.bounds
         
-        // Create container view for the layer - 숨겨진 상태로 시작
+        // Create container view for the layer
         displayLayerView = UIView(frame: containerView.bounds)
         displayLayerView?.backgroundColor = .clear
         displayLayerView?.layer.addSublayer(displayLayer)
-        displayLayerView?.isHidden = true // PiP 비활성 시 숨김
+        displayLayerView?.isHidden = true // Initially hidden
         
         // Add to container
         containerView.addSubview(displayLayerView!)
@@ -171,6 +158,12 @@ class PictureInPictureManager: NSObject, ObservableObject {
             
             print("Timebase configured")
         }
+    }
+    
+    private func setupFrameExtractor() {
+        frameExtractor = VLCFrameExtractor(vlcPlayer: vlcPlayer!, containerView: containerView!)
+        frameExtractor?.delegate = self
+        print("Frame extractor configured")
     }
     
     @available(iOS 15.0, *)
@@ -224,94 +217,6 @@ class PictureInPictureManager: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - PiP용 독립 플레이어 생성
-    
-    private func createPiPPlayer() {
-        guard let streamURL = currentStreamURL else {
-            print("No stream URL available for PiP")
-            return
-        }
-        
-        // PiP 전용 VLC 플레이어 생성
-        pipVLCPlayer = VLCMediaPlayer()
-        
-        // 숨겨진 뷰에 연결 (오디오만 필요)
-        let hiddenView = UIView(frame: CGRect.zero)
-        pipVLCPlayer?.drawable = hiddenView
-        
-        // 오디오 설정
-        pipVLCPlayer?.audio?.volume = 0 // PiP는 비디오만, 오디오는 메인에서
-        
-        // 미디어 설정
-        let authenticatedURL = buildAuthenticatedURL(url: streamURL, username: streamUsername, password: streamPassword)
-        guard let mediaURL = URL(string: authenticatedURL) else {
-            print("Invalid PiP URL: \(authenticatedURL)")
-            return
-        }
-        
-        let media = VLCMedia(url: mediaURL)
-        applyStreamOptimizations(to: media, caching: networkCaching)
-        
-        pipVLCPlayer?.media = media
-        
-        print("PiP player created with independent stream")
-    }
-    
-    private func buildAuthenticatedURL(url: String, username: String?, password: String?) -> String {
-        guard let username = username, let password = password else { return url }
-        
-        if let urlComponents = URLComponents(string: url) {
-            let components = urlComponents
-            var urlString = "\(components.scheme ?? "rtsp")://"
-            urlString += "\(username):\(password)@"
-            urlString += "\(components.host ?? "")"
-            if let port = components.port {
-                urlString += ":\(port)"
-            }
-            urlString += components.path
-            return urlString
-        }
-        
-        return url
-    }
-    
-    private func applyStreamOptimizations(to media: VLCMedia, caching: Int) {
-        let lowLatencyOptions: [String: String] = [
-            "network-caching": "\(caching)",
-            "rtsp-caching": "\(caching)",
-            "tcp-caching": "\(caching)",
-            "realrtsp-caching": "\(caching)",
-            "clock-jitter": "\(caching)",
-            "rtsp-tcp": "",
-            "avcodec-hw": "videotoolbox",
-            "clock-synchro": "0",
-            "avcodec-skiploopfilter": "0",
-            "avcodec-skip-frame": "0",
-            "avcodec-skip-idct": "0",
-            "avcodec-threads": "4",
-            "sout-mux-caching": "10",
-            "live-caching": "\(caching)"
-        ]
-        
-        // Apply all options
-        for (key, value) in lowLatencyOptions {
-            if value.isEmpty {
-                media.addOption("--\(key)")
-            } else {
-                media.addOption("--\(key)=\(value)")
-            }
-        }
-        
-        // Additional codec optimizations
-        media.addOption("--intf=dummy")
-        media.addOption("--no-audio-time-stretch")
-        media.addOption("--no-network-synchronisation")
-        media.addOption("--no-drop-late-frames")
-        media.addOption("--no-skip-frames")
-        media.addOption("--video-filter=")
-        media.addOption("--deinterlace=0")
-    }
-    
     // MARK: - Public Methods
     
     func startPiP() {
@@ -320,69 +225,29 @@ class PictureInPictureManager: NSObject, ObservableObject {
             return
         }
         
-        print("Starting PiP with independent player...")
-        
-        // 1. PiP용 독립 플레이어 생성 및 시작
-        createPiPPlayer()
-        
-        // 2. 메인 플레이어의 drawable 해제 (중요!)
-        DispatchQueue.main.async { [weak self] in
-            self?.mainVLCPlayer?.drawable = nil
-            print("Main player drawable disconnected for PiP")
-        }
-        
-        // 3. PiP 플레이어 시작
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.pipVLCPlayer?.play()
-            
-            // 4. 프레임 추출 시작
-            self?.setupFrameExtractor()
-            
-            // 5. PiP UI 시작
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.pipController?.startPictureInPicture()
-                print("PiP UI started")
-            }
-        }
-    }
-    
-    private func setupFrameExtractor() {
-        guard let pipPlayer = pipVLCPlayer else { return }
-        
-        frameExtractor = VLCFrameExtractor(vlcPlayer: pipPlayer, containerView: UIView()) // 더미 뷰
-        frameExtractor?.delegate = self
-        
         // Reset frame counter
         frameCount = 0
         lastFrameTime = CACurrentMediaTime()
         
+        // Start frame extraction
         frameExtractor?.startExtraction()
-        print("Frame extractor started for PiP player")
+        
+        // Start PiP after a small delay to ensure frames are being generated
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.pipController?.startPictureInPicture()
+            print("Starting PiP")
+        }
     }
     
     func stopPiP() {
         guard isPiPActive else { return }
         
-        print("Stopping PiP...")
-        
-        // 1. 프레임 추출 중지
+        // Stop frame extraction
         frameExtractor?.stopExtraction()
-        frameExtractor = nil
         
-        // 2. PiP 플레이어 정지
-        pipVLCPlayer?.stop()
-        pipVLCPlayer = nil
-        
-        // 3. PiP UI 중지
+        // Stop PiP
         pipController?.stopPictureInPicture()
-        
-        // 4. 메인 플레이어의 drawable 복원
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            if let containerView = self?.containerView {
-                self?.mainVLCPlayer?.drawable = containerView
-                print("Main player drawable restored")
-            }
-        }
+        print("Stopping PiP")
     }
     
     func togglePiP() {
@@ -401,9 +266,6 @@ class PictureInPictureManager: NSObject, ObservableObject {
         
         pipController?.delegate = nil
         pipController = nil
-        
-        pipVLCPlayer?.stop()
-        pipVLCPlayer = nil
         
         sampleBufferDisplayLayer?.flushAndRemoveImage()
         sampleBufferDisplayLayer?.removeFromSuperlayer()
@@ -427,9 +289,8 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // MARK: - Integration Helper Properties
     
     var canStartPiP: Bool {
-        let hasStream = currentStreamURL != nil
-        let canStart = isPiPSupported && isPiPPossible && !isPiPActive && hasStream
-        print("Can start PiP: \(canStart) (Supported: \(isPiPSupported), Possible: \(isPiPPossible), Active: \(isPiPActive), HasStream: \(hasStream))")
+        let canStart = isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
+        print("Can start PiP: \(canStart) (Supported: \(isPiPSupported), Possible: \(isPiPPossible), Active: \(isPiPActive), Playing: \(vlcPlayer?.isPlaying ?? false))")
         return canStart
     }
     
@@ -437,22 +298,24 @@ class PictureInPictureManager: NSObject, ObservableObject {
         if !isPiPSupported {
             return "Not Supported"
         } else if isPiPActive {
-            return "Active (Independent)"
+            return "Active"
         } else if isPiPPossible {
             return "Ready"
-        } else if currentStreamURL != nil {
+        } else if vlcPlayer?.isPlaying ?? false {
             return "Preparing"
         } else {
-            return "No Stream"
+            return "Inactive"
         }
     }
 }
 
-// MARK: - 개선된 VLC Frame Extractor
+// MARK: - Improved VLC Frame Extractor
 class VLCFrameExtractor: NSObject {
     weak var vlcPlayer: VLCMediaPlayer?
     weak var delegate: VLCFrameExtractionDelegate?
+    private var containerView: UIView
     
+    // Make isExtracting public to fix the access error
     var isExtracting = false
     private var extractionTimer: Timer?
     private let extractionQueue = DispatchQueue(label: "com.rtspplayer.extraction", qos: .userInteractive)
@@ -469,6 +332,7 @@ class VLCFrameExtractor: NSObject {
     
     init(vlcPlayer: VLCMediaPlayer, containerView: UIView) {
         self.vlcPlayer = vlcPlayer
+        self.containerView = containerView
         super.init()
         setupPixelBufferPool()
     }
@@ -545,6 +409,8 @@ class VLCFrameExtractor: NSObject {
     private func processSnapshotFile(at path: String) {
         guard FileManager.default.fileExists(atPath: path),
               let image = UIImage(contentsOfFile: path) else {
+            // If snapshot failed, try direct view capture as fallback
+            captureViewDirectly()
             return
         }
         
@@ -555,6 +421,17 @@ class VLCFrameExtractor: NSObject {
         
         // Clean up snapshot file
         try? FileManager.default.removeItem(atPath: path)
+    }
+    
+    private func captureViewDirectly() {
+        // Fallback method: capture the container view directly
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            if let pixelBuffer = self.captureViewToPixelBuffer(self.containerView) {
+                self.processPixelBuffer(pixelBuffer)
+            }
+        }
     }
     
     private func imageToPixelBuffer(_ image: UIImage) -> CVPixelBuffer? {
@@ -598,6 +475,62 @@ class VLCFrameExtractor: NSObject {
         ) else { return nil }
         
         context.draw(image.cgImage!, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        return buffer
+    }
+    
+    private func captureViewToPixelBuffer(_ view: UIView) -> CVPixelBuffer? {
+        let width = Int(view.bounds.width)
+        let height = Int(view.bounds.height)
+        
+        guard width > 0, height > 0 else { return nil }
+        
+        var pixelBuffer: CVPixelBuffer?
+        
+        if let pool = pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        } else {
+            let attrs: [String: Any] = [
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                width,
+                height,
+                kCVPixelFormatType_32BGRA,
+                attrs as CFDictionary,
+                &pixelBuffer
+            )
+        }
+        
+        guard let buffer = pixelBuffer else { return nil }
+        
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        
+        let pixelData = CVPixelBufferGetBaseAddress(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: pixelData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: rgbColorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+        
+        UIGraphicsPushContext(context)
+        view.layer.render(in: context)
+        UIGraphicsPopContext()
         
         return buffer
     }
@@ -721,18 +654,18 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         print("PiP will start")
+        
+        // Ensure frame extraction is running
+        if frameExtractor?.isExtracting != true {
+            frameExtractor?.startExtraction()
+        }
+        
         delegate?.pipWillStart()
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did start - Independent mode active")
+        print("PiP did start")
         isPiPActive = true
-        
-        // 메인 플레이어는 백그라운드에서 오디오만 유지
-        DispatchQueue.main.async { [weak self] in
-            self?.mainVLCPlayer?.audio?.volume = 100  // 오디오는 메인에서
-        }
-        
         delegate?.pipDidStart()
     }
     
@@ -742,21 +675,10 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did stop - Restoring main player")
+        print("PiP did stop")
         isPiPActive = false
         
-        // PiP 리소스 정리
         frameExtractor?.stopExtraction()
-        pipVLCPlayer?.stop()
-        pipVLCPlayer = nil
-        
-        // 메인 플레이어의 drawable 복원
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            if let containerView = self?.containerView {
-                self?.mainVLCPlayer?.drawable = containerView
-                print("Main player drawable fully restored")
-            }
-        }
         
         delegate?.pipDidStop()
     }
@@ -764,13 +686,6 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    failedToStartPictureInPictureWithError error: Error) {
         print("Failed to start PiP: \(error.localizedDescription)")
-        
-        // 실패 시 복원
-        DispatchQueue.main.async { [weak self] in
-            if let containerView = self?.containerView {
-                self?.mainVLCPlayer?.drawable = containerView
-            }
-        }
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
@@ -787,10 +702,10 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    setPlaying playing: Bool) {
         if playing {
-            pipVLCPlayer?.play()
+            vlcPlayer?.play()
             frameExtractor?.startExtraction()
         } else {
-            pipVLCPlayer?.pause()
+            vlcPlayer?.pause()
             frameExtractor?.stopExtraction()
         }
     }
@@ -800,7 +715,7 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     }
     
     func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        return !(pipVLCPlayer?.isPlaying ?? false)
+        return !(vlcPlayer?.isPlaying ?? false)
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
