@@ -11,10 +11,13 @@ struct ContentView: View {
     @State private var newStreamUsername = ""
     @State private var newStreamPassword = ""
     @State private var showStreamInfo = false
-    @State private var currentStreamInfo: [String: Any] = [:]
+    @State private var currentStreamInfo: StreamInfo?
     
     // Player size management
     @State private var playerSize: CGSize = .zero
+    
+    // PiP 상태 추적
+    @State private var isPiPModeActive = false
     
     var body: some View {
         NavigationView {
@@ -22,16 +25,27 @@ struct ContentView: View {
                 // 메인 리스트 뷰
                 streamListView
                 
-                // 플레이어 오버레이 with proper sizing
+                // 플레이어 오버레이 (PiP 모드일 때 숨김/투명도 조절)
                 if showPlayer, viewModel.selectedStream != nil {
                     playerOverlay
+                        .opacity(isPiPModeActive ? 0.3 : 1.0) // PiP 활성시 반투명
+                        .animation(.easeInOut(duration: 0.3), value: isPiPModeActive)
                 }
             }
-            .navigationTitle("RTSP 플레이어")
+            .navigationTitle(isPiPModeActive ? "RTSP 플레이어 (PiP 모드)" : "RTSP 플레이어")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showAddStream = true }) {
-                        Image(systemName: "plus")
+                    HStack {
+                        // PiP 상태 표시
+                        if isPiPModeActive {
+                            Image(systemName: "pip.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                        }
+                        
+                        Button(action: { showAddStream = true }) {
+                            Image(systemName: "plus")
+                        }
                     }
                 }
                 
@@ -49,6 +63,16 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showStreamInfo) {
                 streamInfoView
+            }
+            .onChange(of: pipManager.isPiPActive) { isActive in
+                isPiPModeActive = isActive
+                
+                // PiP 상태 변경시 UI 업데이트
+                if isActive {
+                    print("PiP 모드 활성화 - 메인 UI 반투명 처리")
+                } else {
+                    print("PiP 모드 비활성화 - 메인 UI 복원")
+                }
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -88,7 +112,7 @@ struct ContentView: View {
                     // Enhanced PiP 상태 표시
                     if pipManager.isPiPSupported {
                         HStack {
-                            Text("Enhanced PiP:")
+                            Text("독립 PiP:")
                             Spacer()
                             HStack(spacing: 4) {
                                 Circle()
@@ -100,15 +124,42 @@ struct ContentView: View {
                             }
                         }
                         
-                        // Debug info
+                        // 상세 PiP 정보
                         if viewModel.selectedStream != nil {
                             HStack {
-                                Text("PiP 상태:")
+                                Text("PiP 모드:")
                                 Spacer()
                                 Text(pipManager.pipStatus)
                                     .font(.caption2)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(pipManager.isPiPActive ? .green : .blue)
                             }
+                            
+                            if isPiPModeActive {
+                                HStack {
+                                    Text("독립 실행:")
+                                    Spacer()
+                                    Text("백그라운드 지원")
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 스트림 정보 표시
+                    if let streamInfo = currentStreamInfo {
+                        HStack {
+                            Text("해상도:")
+                            Spacer()
+                            Text(streamInfo.resolutionString)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Text("코덱:")
+                            Spacer()
+                            Text(streamInfo.videoCodec)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
@@ -117,18 +168,18 @@ struct ContentView: View {
         .listStyle(InsetGroupedListStyle())
     }
     
-    // MARK: - Player Overlay with Fixed Sizing
+    // MARK: - Player Overlay with PiP Support
     private var playerOverlay: some View {
         GeometryReader { geometry in
             ZStack {
-                Color.black.opacity(0.9)
+                Color.black.opacity(isPiPModeActive ? 0.7 : 0.9)
                     .edgesIgnoringSafeArea(.all)
                 
                 VStack(spacing: 0) {
-                    // 헤더
+                    // 헤더 (PiP 상태 표시 포함)
                     playerHeader
                     
-                    // 플레이어 뷰 with proper constraints
+                    // 플레이어 뷰 (PiP 모드에서도 유지되지만 반투명)
                     RTSPPlayerView(
                         url: $viewModel.currentStreamURL,
                         isPlaying: $viewModel.isPlaying,
@@ -138,7 +189,7 @@ struct ContentView: View {
                     )
                     .frame(
                         width: geometry.size.width,
-                        height: geometry.size.width * 9 / 16 // 16:9 aspect ratio
+                        height: geometry.size.width * 9 / 16
                     )
                     .background(Color.black)
                     .clipped()
@@ -146,17 +197,26 @@ struct ContentView: View {
                         // 더블 탭으로 PiP 토글
                         pipManager.togglePiP()
                     }
+                    .onStreamInfoUpdate { info in
+                        currentStreamInfo = info
+                    }
+                    .onPiPStatusUpdate { isActive in
+                        isPiPModeActive = isActive
+                    }
                     .onAppear {
                         playerSize = CGSize(
                             width: geometry.size.width,
                             height: geometry.size.width * 9 / 16
                         )
-                        print("Player size set to: \(playerSize)")
                     }
+                    .overlay(
+                        // PiP 모드일 때 오버레이 표시
+                        isPiPModeActive ? pipModeOverlay : nil
+                    )
                     
                     Spacer()
                     
-                    // 컨트롤러
+                    // 컨트롤러 (PiP 상태에 따라 조절)
                     playerControls
                 }
             }
@@ -165,12 +225,48 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Player Header
+    // MARK: - PiP 모드 오버레이
+    private var pipModeOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.6)
+            
+            VStack(spacing: 12) {
+                Image(systemName: "pip.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.green)
+                
+                Text("PiP 모드 실행 중")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                Text("독립적으로 재생됩니다")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                Button("PiP 종료") {
+                    pipManager.stopPiP()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(Color.red)
+                .foregroundColor(.white)
+                .cornerRadius(8)
+            }
+        }
+    }
+    
+    // MARK: - Player Header (PiP 상태 포함)
     private var playerHeader: some View {
         HStack {
             Button(action: {
+                // PiP 활성 상태라면 먼저 종료
+                if pipManager.isPiPActive {
+                    pipManager.stopPiP()
+                }
+                
                 viewModel.stop()
                 showPlayer = false
+                isPiPModeActive = false
             }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
@@ -180,22 +276,29 @@ struct ContentView: View {
             Spacer()
             
             VStack(spacing: 2) {
-                Text(viewModel.selectedStream?.name ?? "스트림")
-                    .font(.headline)
-                    .foregroundColor(.white)
+                HStack(spacing: 8) {
+                    Text(viewModel.selectedStream?.name ?? "스트림")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    // PiP 상태 인디케이터
+                    if isPiPModeActive {
+                        Image(systemName: "pip.fill")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                }
                 
-                // 스트림 품질 정보 표시
                 if let stream = viewModel.selectedStream {
                     Text(getStreamQualityText(for: stream))
                         .font(.caption2)
                         .foregroundColor(.gray)
                 }
                 
-                // 플레이어 크기 정보
-                if playerSize != .zero {
-                    Text("화면: \(Int(playerSize.width))×\(Int(playerSize.height))")
+                if let streamInfo = currentStreamInfo {
+                    Text(streamInfo.pipStatusDescription)
                         .font(.caption2)
-                        .foregroundColor(.gray)
+                        .foregroundColor(isPiPModeActive ? .green : .blue)
                 }
             }
             
@@ -211,10 +314,10 @@ struct ContentView: View {
                         .foregroundColor(.white)
                 }
                 
-                // Enhanced PiP 버튼
+                // Enhanced PiP 버튼 (독립적)
                 if pipManager.isPiPSupported {
                     Button(action: {
-                        print("PiP button tapped - Can start: \(pipManager.canStartPiP)")
+                        print("Independent PiP button tapped")
                         pipManager.togglePiP()
                     }) {
                         Image(systemName: getPiPButtonIcon())
@@ -222,26 +325,55 @@ struct ContentView: View {
                             .foregroundColor(pipManager.canStartPiP ? .white : .gray)
                     }
                     .disabled(!pipManager.canStartPiP && !pipManager.isPiPActive)
+                    .overlay(
+                        // PiP 활성 상태 표시
+                        isPiPModeActive ? 
+                        Circle()
+                            .stroke(Color.green, lineWidth: 2)
+                            .scaleEffect(1.2)
+                        : nil
+                    )
                 }
             }
         }
         .padding()
-        .background(Color.black.opacity(0.8))
+        .background(
+            isPiPModeActive ? 
+            Color.green.opacity(0.2) : 
+            Color.black.opacity(0.8)
+        )
     }
     
-    // MARK: - Player Controls
+    // MARK: - Player Controls (PiP 상태 고려)
     private var playerControls: some View {
         VStack(spacing: 20) {
+            // PiP 모드 안내
+            if isPiPModeActive {
+                HStack {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.green)
+                    Text("독립 PiP 모드에서 실행 중입니다. 앱을 백그라운드로 이동해도 계속 재생됩니다.")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color.green.opacity(0.2))
+                .cornerRadius(8)
+                .padding(.horizontal)
+            }
+            
             // 재생 컨트롤
             HStack(spacing: 40) {
                 Button(action: {
-                    print("Reconnecting stream...")
+                    print("Reconnecting independent stream...")
                     viewModel.reconnectStream()
                 }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.title2)
                         .foregroundColor(.white)
                 }
+                .disabled(isPiPModeActive) // PiP 모드에서는 비활성화
                 
                 Button(action: viewModel.togglePlayPause) {
                     Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
@@ -256,7 +388,7 @@ struct ContentView: View {
                 }
             }
             
-            // 볼륨 컨트롤
+            // 볼륨 컨트롤 (PiP 모드에서도 작동)
             HStack {
                 Image(systemName: "speaker.fill")
                     .foregroundColor(.white)
@@ -272,7 +404,7 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // Enhanced 지연 설정 with 코덱 최적화
+            // 지연 설정 (PiP 모드에서는 변경 불가)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("지연 설정: \(viewModel.selectedLatencyPreset.rawValue)")
@@ -281,14 +413,19 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    // 코덱 정보 표시
-                    Text("H.264/H.265 최적화")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.blue.opacity(0.2))
-                        .cornerRadius(4)
-                        .foregroundColor(.blue)
+                    if isPiPModeActive {
+                        Text("PiP 모드에서 변경 불가")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text("독립 PiP 최적화")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.2))
+                            .cornerRadius(4)
+                            .foregroundColor(.blue)
+                    }
                 }
                 
                 Picker("지연 설정", selection: $viewModel.selectedLatencyPreset) {
@@ -297,56 +434,145 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
+                .disabled(isPiPModeActive) // PiP 모드에서는 비활성화
                 .onChange(of: viewModel.selectedLatencyPreset) { newValue in
-                    print("Latency preset changed to: \(newValue)")
-                    viewModel.applyLatencySettings(newValue)
+                    if !isPiPModeActive {
+                        print("Latency preset changed to: \(newValue)")
+                        viewModel.applyLatencySettings(newValue)
+                    }
                 }
             }
             .padding(.horizontal)
             
-            // PiP 상태와 디버그 정보 표시
+            // PiP 컨트롤 패널
             if pipManager.isPiPSupported {
-                VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "pip")
-                            .foregroundColor(.blue)
-                        
-                        Text("Enhanced PiP: \(pipStatusText)")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        Spacer()
-                        
-                        if pipManager.canStartPiP || pipManager.isPiPActive {
-                            Button(pipManager.isPiPActive ? "종료" : "시작") {
-                                print("Manual PiP toggle - Current state: \(pipManager.isPiPActive)")
-                                pipManager.togglePiP()
-                            }
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.2))
-                            .cornerRadius(4)
-                            .foregroundColor(.blue)
-                        }
-                    }
-                    
-                    // Debug info for troubleshooting
-                    HStack {
-                        Text("디버그: \(pipManager.pipStatus)")
-                            .font(.caption2)
-                            .foregroundColor(.yellow)
-                        Spacer()
-                    }
-                }
-                .padding(.horizontal)
+                pipControlPanel
             }
         }
         .padding()
-        .background(Color.black.opacity(0.8))
+        .background(
+            isPiPModeActive ? 
+            Color.green.opacity(0.1) : 
+            Color.black.opacity(0.8)
+        )
     }
     
-    // MARK: - Add Stream View
+    // MARK: - PiP 컨트롤 패널
+    private var pipControlPanel: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "pip")
+                    .foregroundColor(.blue)
+                
+                Text("독립 PiP (Enhanced)")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Text(pipStatusText)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        pipManager.isPiPActive ? Color.green.opacity(0.2) : Color.gray.opacity(0.2)
+                    )
+                    .cornerRadius(6)
+                    .foregroundColor(pipManager.isPiPActive ? .green : .gray)
+            }
+            
+            if pipManager.isPiPActive {
+                HStack(spacing: 12) {
+                    Button("PiP 종료") {
+                        pipManager.stopPiP()
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.red.opacity(0.2))
+                    .cornerRadius(6)
+                    .foregroundColor(.red)
+                    
+                    Text("백그라운드에서 독립 실행 중")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    
+                    Spacer()
+                }
+            } else if pipManager.canStartPiP {
+                HStack(spacing: 12) {
+                    Button("PiP 시작") {
+                        pipManager.startPiP()
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.2))
+                    .cornerRadius(6)
+                    .foregroundColor(.blue)
+                    
+                    Text("메인 UI와 독립적으로 실행됩니다")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                }
+            }
+            
+            // 기능 설명
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text("백그라운드 재생")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text("독립적인 스트림 인스턴스")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text("저지연 최적화")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text("하드웨어 디코딩")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+        .padding()
+        .background(Color.blue.opacity(0.1))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+    
+    // MARK: - Add Stream View (동일하게 유지)
     private var addStreamView: some View {
         NavigationView {
             Form {
@@ -375,7 +601,7 @@ struct ContentView: View {
                     }
                 }
                 
-                Section(header: Text("Enhanced PiP 설정")) {
+                Section(header: Text("독립 PiP 정보")) {
                     HStack {
                         Text("PiP 지원")
                         Spacer()
@@ -384,7 +610,7 @@ struct ContentView: View {
                     }
                     
                     if pipManager.isPiPSupported {
-                        Text("H.264/H.265 스트림에서 Enhanced PiP를 지원합니다. 스트림 재생 후 PiP 버튼을 눌러주세요.")
+                        Text("독립적인 PiP 인스턴스를 생성하여 메인 UI와 분리된 백그라운드 재생을 지원합니다.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -410,7 +636,7 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Settings View
+    // MARK: - Settings View (PiP 정보 포함)
     private var settingsView: some View {
         NavigationView {
             Form {
@@ -427,7 +653,7 @@ struct ContentView: View {
                     }
                 }
                 
-                Section(header: Text("Enhanced PiP 설정")) {
+                Section(header: Text("독립 PiP 설정")) {
                     HStack {
                         Text("PiP 지원")
                         Spacer()
@@ -437,7 +663,7 @@ struct ContentView: View {
                     
                     if pipManager.isPiPSupported {
                         HStack {
-                            Text("PiP 상태")
+                            Text("현재 PiP 상태")
                             Spacer()
                             Text(pipStatusText)
                                 .foregroundColor(pipManager.isPiPActive ? .green : .gray)
@@ -452,65 +678,26 @@ struct ContentView: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Enhanced Features")
+                            Text("독립 PiP 기능")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                             
-                            Text("• H.264/H.265 하드웨어 디코딩")
+                            Text("• 메인 UI와 완전 분리된 독립 실행")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            Text("• 저지연 스트리밍 최적화")
+                            Text("• 백그라운드에서 지속적인 재생")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            Text("• 실시간 프레임 추출")
+                            Text("• 별도 VLC 인스턴스로 안정성 향상")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            Text("• 30 FPS 스냅샷 기반 렌더링")
+                            Text("• 저지연 RTSP 스트리밍 최적화")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                    }
-                }
-                
-                Section(header: Text("코덱 지원")) {
-                    HStack {
-                        Text("H.264 지원")
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                    }
-                    
-                    HStack {
-                        Text("H.265 지원")
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                    }
-                    
-                    HStack {
-                        Text("하드웨어 디코딩")
-                        Spacer()
-                        Text("VideoToolbox")
-                            .foregroundColor(.blue)
-                    }
-                }
-                
-                Section(header: Text("디스플레이 설정")) {
-                    HStack {
-                        Text("플레이어 크기")
-                        Spacer()
-                        Text(playerSize != .zero ? "\(Int(playerSize.width))×\(Int(playerSize.height))" : "미설정")
-                            .foregroundColor(.gray)
-                    }
-                    
-                    HStack {
-                        Text("화면 비율")
-                        Spacer()
-                        Text("16:9 고정")
-                            .foregroundColor(.gray)
                     }
                 }
                 
@@ -518,7 +705,7 @@ struct ContentView: View {
                     HStack {
                         Text("버전")
                         Spacer()
-                        Text("1.2.0")
+                        Text("1.3.0")
                             .foregroundColor(.gray)
                     }
                     
@@ -530,10 +717,10 @@ struct ContentView: View {
                     }
                     
                     HStack {
-                        Text("Enhanced PiP")
+                        Text("독립 PiP")
                         Spacer()
-                        Text("활성화됨")
-                            .foregroundColor(.green)
+                        Text(pipManager.isPiPSupported ? "활성화됨" : "지원 안됨")
+                            .foregroundColor(pipManager.isPiPSupported ? .green : .red)
                     }
                 }
             }
@@ -548,7 +735,7 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Stream Info View
+    // MARK: - Stream Info View (PiP 상태 포함)
     private var streamInfoView: some View {
         NavigationView {
             Form {
@@ -569,58 +756,60 @@ struct ContentView: View {
                                 .foregroundColor(.secondary)
                                 .lineLimit(2)
                         }
-                        
-                        HStack {
-                            Text("품질")
-                            Spacer()
-                            Text(getStreamQualityText(for: stream))
-                                .foregroundColor(.blue)
-                        }
                     }
                     
-                    Section(header: Text("네트워크 정보")) {
-                        HStack {
-                            Text("캐싱 설정")
-                            Spacer()
-                            Text("\(stream.networkCaching) ms")
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        HStack {
-                            Text("프로토콜")
-                            Spacer()
-                            Text("RTSP")
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        if stream.username != nil {
+                    if let streamInfo = currentStreamInfo {
+                        Section(header: Text("재생 정보")) {
                             HStack {
-                                Text("인증")
+                                Text("해상도")
                                 Spacer()
-                                Text("필요")
-                                    .foregroundColor(.orange)
+                                Text(streamInfo.resolutionString)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack {
+                                Text("품질")
+                                Spacer()
+                                Text(streamInfo.qualityDescription)
+                                    .foregroundColor(.blue)
+                            }
+                            
+                            HStack {
+                                Text("코덱")
+                                Spacer()
+                                Text(streamInfo.videoCodec)
+                                    .foregroundColor(.secondary)
                             }
                         }
-                    }
-                    
-                    Section(header: Text("디스플레이 정보")) {
-                        HStack {
-                            Text("플레이어 크기")
-                            Spacer()
-                            Text(playerSize != .zero ? "\(Int(playerSize.width))×\(Int(playerSize.height))" : "미설정")
-                                .foregroundColor(.secondary)
-                        }
                         
-                        HStack {
-                            Text("PiP 상태")
-                            Spacer()
-                            Text(pipManager.pipStatus)
-                                .foregroundColor(.blue)
+                        Section(header: Text("PiP 상태")) {
+                            HStack {
+                                Text("PiP 모드")
+                                Spacer()
+                                Text(streamInfo.pipStatusDescription)
+                                    .foregroundColor(streamInfo.isPiPActive ? .green : .blue)
+                            }
+                            
+                            HStack {
+                                Text("독립 실행")
+                                Spacer()
+                                Text(streamInfo.isPiPActive ? "예" : "아니오")
+                                    .foregroundColor(streamInfo.isPiPActive ? .green : .gray)
+                            }
+                            
+                            if streamInfo.isPiPActive {
+                                HStack {
+                                    Text("백그라운드 지원")
+                                    Spacer()
+                                    Text("활성화")
+                                        .foregroundColor(.green)
+                                }
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("스트림 정보")
+            .navigationTitle("스트림 상세 정보")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("완료") {
@@ -656,7 +845,7 @@ struct ContentView: View {
         switch viewModel.playerState {
         case .idle: return "대기"
         case .loading: return "로딩 중..."
-        case .playing: return "재생 중"
+        case .playing: return isPiPModeActive ? "재생 중 (PiP)" : "재생 중"
         case .paused: return "일시정지"
         case .error(let message): return "오류: \(message)"
         }
@@ -666,7 +855,7 @@ struct ContentView: View {
         switch viewModel.playerState {
         case .idle: return .gray
         case .loading: return .orange
-        case .playing: return .green
+        case .playing: return isPiPModeActive ? .green : .blue
         case .paused: return .yellow
         case .error: return .red
         }
@@ -674,7 +863,7 @@ struct ContentView: View {
     
     private var pipStatusText: String {
         if pipManager.isPiPActive {
-            return "활성"
+            return "독립 실행"
         } else if pipManager.isPiPPossible {
             return "준비됨"
         } else {
@@ -691,7 +880,6 @@ struct ContentView: View {
     }
     
     private func getStreamQualityText(for stream: RTSPStream) -> String {
-        // URL에서 품질 힌트 추출
         let url = stream.url.lowercased()
         if url.contains("4k") || url.contains("2160") {
             return "4K UHD"
@@ -705,10 +893,11 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Enhanced Stream Row View
+// MARK: - Enhanced Stream Row View with PiP Status
 struct StreamRowView: View {
     let stream: RTSPStream
     let action: () -> Void
+    @StateObject private var pipManager = PictureInPictureManager.shared
     
     var body: some View {
         Button(action: action) {
@@ -730,7 +919,6 @@ struct StreamRowView: View {
                                 .foregroundColor(.orange)
                         }
                         
-                        // 지연 설정 표시
                         Text("\(stream.networkCaching)ms")
                             .font(.caption2)
                             .padding(.horizontal, 4)
@@ -739,11 +927,14 @@ struct StreamRowView: View {
                             .cornerRadius(3)
                             .foregroundColor(.blue)
                         
-                        // Enhanced PiP 지원 표시
-                        if PictureInPictureManager.shared.isPiPSupported {
-                            Image(systemName: "pip")
-                                .font(.caption2)
-                                .foregroundColor(.green)
+                        if pipManager.isPiPSupported {
+                            HStack(spacing: 2) {
+                                Image(systemName: "pip")
+                                    .font(.caption2)
+                                Text("독립")
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.green)
                         }
                     }
                 }
