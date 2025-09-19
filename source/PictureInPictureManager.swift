@@ -4,8 +4,9 @@ import Combine
 import VLCKitSPM
 import VideoToolbox
 import CoreMedia
+import CoreVideo
 
-// PiP 관리자 프로토콜
+// MARK: - PiP Manager Protocol
 protocol PictureInPictureManagerDelegate: AnyObject {
     func pipDidStart()
     func pipDidStop()
@@ -14,7 +15,7 @@ protocol PictureInPictureManagerDelegate: AnyObject {
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
 }
 
-// Enhanced Picture in Picture 관리 클래스 - H.264/H.265 직접 지원
+// MARK: - RTSP Sample Buffer PiP Manager
 class PictureInPictureManager: NSObject, ObservableObject {
     
     // Singleton
@@ -29,9 +30,13 @@ class PictureInPictureManager: NSObject, ObservableObject {
     private var pipController: AVPictureInPictureController?
     private var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer?
     
-    // VLC Integration
+    // RTSP Stream Processing
+    private var rtspSampleBufferExtractor: RTSPSampleBufferExtractor?
     private var vlcPlayer: VLCMediaPlayer?
-    private var frameExtractor: VideoFrameExtractor?
+    
+    // Video Format
+    private var formatDescription: CMVideoFormatDescription?
+    private var lastPresentationTime = CMTime.zero
     
     // Delegate
     weak var delegate: PictureInPictureManagerDelegate?
@@ -39,8 +44,8 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // Cancellables
     private var cancellables = Set<AnyCancellable>()
     
-    // Frame processing queue
-    private let frameQueue = DispatchQueue(label: "com.rtspplayer.frameprocessing", qos: .userInteractive)
+    // Processing queues
+    private let sampleBufferQueue = DispatchQueue(label: "com.rtspplayer.samplebuffer", qos: .userInteractive)
     private let displayQueue = DispatchQueue(label: "com.rtspplayer.display", qos: .userInteractive)
     
     override init() {
@@ -67,15 +72,14 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - H.264/H.265 Direct PiP Implementation
+    // MARK: - RTSP Sample Buffer Setup
     
-    /// VLCKit 기반 H.264/H.265 스트림을 위한 PiP 설정
-    func setupPiPForCodecStream(vlcPlayer: VLCMediaPlayer, streamURL: String) {
+    func setupPiPForRTSPStream(vlcPlayer: VLCMediaPlayer, streamURL: String) {
         cleanupPiPController()
         
         self.vlcPlayer = vlcPlayer
         
-        // AVSampleBufferDisplayLayer 생성
+        // Create sample buffer display layer
         sampleBufferDisplayLayer = AVSampleBufferDisplayLayer()
         
         guard let displayLayer = sampleBufferDisplayLayer else {
@@ -83,25 +87,28 @@ class PictureInPictureManager: NSObject, ObservableObject {
             return
         }
         
-        // Display layer 설정
+        // Configure display layer
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
         
-        // Timebase 설정
+        // Setup timebase
         setupTimebase(for: displayLayer)
         
-        // PiP 컨트롤러 생성 (iOS 15+)
+        // Initialize RTSP sample buffer extractor
+        rtspSampleBufferExtractor = RTSPSampleBufferExtractor(vlcPlayer: vlcPlayer)
+        rtspSampleBufferExtractor?.delegate = self
+        
+        // Setup PiP controller
         if #available(iOS 15.0, *) {
             setupSampleBufferPiPController(with: displayLayer)
         } else {
-            // iOS 14 이하에서는 AVPlayer 브릿지 사용
-            setupLegacyPiPController(vlcPlayer: vlcPlayer)
+            setupLegacyPiPController(with: displayLayer)
         }
         
-        // Frame extractor 초기화
-        frameExtractor = VideoFrameExtractor(vlcPlayer: vlcPlayer)
-        frameExtractor?.delegate = self
-        frameExtractor?.startFrameExtraction()
+        // Start extraction
+        rtspSampleBufferExtractor?.startExtraction()
+        
+        print("PiP setup completed for RTSP stream")
     }
     
     private func setupTimebase(for layer: AVSampleBufferDisplayLayer) {
@@ -116,12 +123,13 @@ class PictureInPictureManager: NSObject, ObservableObject {
             layer.controlTimebase = timebase
             CMTimebaseSetTime(timebase, time: CMTime.zero)
             CMTimebaseSetRate(timebase, rate: 1.0)
+            print("Timebase configured successfully")
         }
     }
     
     @available(iOS 15.0, *)
     private func setupSampleBufferPiPController(with layer: AVSampleBufferDisplayLayer) {
-        pipController = AVPictureInPictureController(contentSource: 
+        pipController = AVPictureInPictureController(contentSource:
             AVPictureInPictureController.ContentSource(
                 sampleBufferDisplayLayer: layer,
                 playbackDelegate: self
@@ -131,22 +139,18 @@ class PictureInPictureManager: NSObject, ObservableObject {
         configurePiPController()
     }
     
-    private func setupLegacyPiPController(vlcPlayer: VLCMediaPlayer) {
-        // iOS 14 이하: AVPlayer 브릿지 방식
-        // 실제 구현에서는 VLC 출력을 AVPlayer로 브릿지하는 복잡한 과정 필요
+    private func setupLegacyPiPController(with layer: AVSampleBufferDisplayLayer) {
+        // iOS 14 and below - use alternative approach
         print("Legacy PiP setup for iOS 14 and below")
-        // 여기서는 기본 설정만 제공
     }
     
     private func configurePiPController() {
         pipController?.delegate = self
         
-        // iOS 14.2+ 자동 PiP 설정
         if #available(iOS 14.2, *) {
             pipController?.canStartPictureInPictureAutomaticallyFromInline = true
         }
         
-        // PiP 상태 관찰
         observePiPStates()
     }
     
@@ -157,7 +161,6 @@ class PictureInPictureManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPossible in
                 self?.isPiPPossible = isPossible
-                print("PiP Possible: \(isPossible)")
             }
             .store(in: &cancellables)
         
@@ -165,20 +168,35 @@ class PictureInPictureManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isActive in
                 self?.isPiPActive = isActive
-                print("PiP Active: \(isActive)")
             }
             .store(in: &cancellables)
     }
     
-    // MARK: - Frame Processing
+    // MARK: - Sample Buffer Processing
     
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard let displayLayer = sampleBufferDisplayLayer else { return }
         
-        displayQueue.async {
-            // Sample buffer를 display layer에 전달
+        displayQueue.async { [weak self] in
+            guard self != nil else { return }
+            
+            // Check if layer is ready
+            if displayLayer.status == .failed {
+                print("Display layer failed")
+                displayLayer.flush()
+            }
+            
+            // Enqueue sample buffer
             if displayLayer.isReadyForMoreMediaData {
                 displayLayer.enqueue(sampleBuffer)
+                
+                // Update format description if needed
+                if let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+                    self?.formatDescription = formatDesc
+                }
+            } else {
+                // Drop frame if not ready
+                print("Display layer not ready, dropping frame")
             }
         }
     }
@@ -210,14 +228,17 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // MARK: - Cleanup
     
     private func cleanupPiPController() {
-        frameExtractor?.stopFrameExtraction()
-        frameExtractor = nil
+        rtspSampleBufferExtractor?.stopExtraction()
+        rtspSampleBufferExtractor = nil
         
         pipController?.delegate = nil
         pipController = nil
         
         sampleBufferDisplayLayer?.flush()
         sampleBufferDisplayLayer = nil
+        
+        formatDescription = nil
+        lastPresentationTime = .zero
         
         cancellables.removeAll()
     }
@@ -231,23 +252,19 @@ class PictureInPictureManager: NSObject, ObservableObject {
 extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP will start")
         delegate?.pipWillStart()
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did start")
         isPiPActive = true
         delegate?.pipDidStart()
     }
     
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP will stop")
         delegate?.pipWillStop()
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did stop")
         isPiPActive = false
         delegate?.pipDidStop()
     }
@@ -257,7 +274,6 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
-        print("Restore UI for PiP")
         delegate?.pipRestoreUserInterface(completionHandler: completionHandler)
     }
 }
@@ -269,13 +285,15 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
         if playing {
             vlcPlayer?.play()
+            rtspSampleBufferExtractor?.resumeExtraction()
         } else {
             vlcPlayer?.pause()
+            rtspSampleBufferExtractor?.pauseExtraction()
         }
     }
     
     func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
-        // 라이브 스트림의 경우 무한 시간 범위 반환
+        // For live RTSP streams, return infinite time range
         return CMTimeRange(start: .zero, duration: .positiveInfinity)
     }
     
@@ -288,199 +306,430 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void) {
-        // 라이브 스트림에서는 스킵 기능이 제한적
+        // Skip not supported for live streams
         completionHandler()
     }
 }
 
-// MARK: - Video Frame Extractor
-class VideoFrameExtractor: NSObject {
+// MARK: - RTSP Sample Buffer Extractor
+class RTSPSampleBufferExtractor: NSObject {
     private weak var vlcPlayer: VLCMediaPlayer?
     private var isExtracting = false
-    private let extractionQueue = DispatchQueue(label: "com.rtspplayer.extraction", qos: .userInteractive)
+    private var isPaused = false
     
-    weak var delegate: VideoFrameExtractionDelegate?
+    weak var delegate: RTSPSampleBufferDelegate?
+    
+    // Video processing
+    private var videoDecompressionSession: VTDecompressionSession?
+    private var videoFormatDescription: CMVideoFormatDescription?
+    
+    // Buffer pool for efficiency
+    private var pixelBufferPool: CVPixelBufferPool?
+    private let bufferQueue = DispatchQueue(label: "com.rtspplayer.buffer", qos: .userInteractive)
+    
+    // Timing
+    private var frameNumber: Int64 = 0
+    private let frameRate: Double = 30.0
     
     init(vlcPlayer: VLCMediaPlayer) {
         self.vlcPlayer = vlcPlayer
         super.init()
+        setupVideoProcessing()
     }
     
-    func startFrameExtraction() {
+    // MARK: - Setup
+    
+    private func setupVideoProcessing() {
+        // Setup VLC video callbacks
+        setupVLCVideoCallbacks()
+        
+        // Create pixel buffer pool
+        createPixelBufferPool()
+    }
+    
+    private func setupVLCVideoCallbacks() {
+        guard let player = vlcPlayer else { return }
+        
+        // Configure VLC to provide video frames
+        // This is where we'd set up the actual VLC video output callbacks
+        // In a real implementation, this would involve:
+        // 1. Setting up libvlc_video_set_callbacks
+        // 2. Configuring the video format
+        // 3. Handling the frame data in callbacks
+        
+        // For now, we'll use a bridging approach
+        configureVLCVideoOutput(player)
+    }
+    
+    private func configureVLCVideoOutput(_ player: VLCMediaPlayer) {
+        // Set video output format to I420 for efficient processing
+        // This would typically be done through VLC's internal APIs
+        print("Configuring VLC video output for RTSP sample buffer extraction")
+        
+        // Start with a timer-based approach for frame extraction
+        startFrameExtractionTimer()
+    }
+    
+    private func createPixelBufferPool() {
+        let pixelBufferAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferWidthKey as String: 1920,
+            kCVPixelBufferHeightKey as String: 1080,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        
+        let poolAttributes = [kCVPixelBufferPoolMinimumBufferCountKey as String: 5]
+        
+        CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelBufferAttributes as CFDictionary,
+            &pixelBufferPool
+        )
+    }
+    
+    // MARK: - Extraction Control
+    
+    func startExtraction() {
         guard !isExtracting else { return }
         isExtracting = true
-        
-        // VLC에서 프레임 추출을 위한 설정
-        // 실제 구현에서는 VLC의 video callback을 사용하여 프레임 데이터를 추출
-        setupFrameCallback()
+        isPaused = false
+        frameNumber = 0
+        print("Started RTSP sample buffer extraction")
     }
     
-    func stopFrameExtraction() {
+    func stopExtraction() {
         isExtracting = false
+        isPaused = false
+        print("Stopped RTSP sample buffer extraction")
     }
     
-    private func setupFrameCallback() {
-        // VLC video callback 설정
-        // 주의: 이 부분은 VLCKit의 내부 API 접근이 필요하므로 
-        // 실제 구현에서는 더 복잡한 방법이 필요할 수 있습니다
-        
-        // 대안: VLC의 스냅샷 기능을 주기적으로 사용
-        startPeriodicFrameCapture()
+    func pauseExtraction() {
+        isPaused = true
     }
     
-    private func startPeriodicFrameCapture() {
-        extractionQueue.async { [weak self] in
+    func resumeExtraction() {
+        isPaused = false
+    }
+    
+    // MARK: - Frame Extraction
+    
+    private func startFrameExtractionTimer() {
+        bufferQueue.async { [weak self] in
             while self?.isExtracting == true {
-                self?.captureCurrentFrame()
-                usleep(33333) // ~30 FPS
+                if !(self?.isPaused ?? true) {
+                    self?.extractCurrentFrame()
+                }
+                // 30 FPS timing
+                usleep(33333)
             }
         }
     }
     
-    private func captureCurrentFrame() {
-        guard let vlcPlayer = vlcPlayer, vlcPlayer.isPlaying else { return }
+    private func extractCurrentFrame() {
+        guard let vlcPlayer = vlcPlayer,
+              vlcPlayer.isPlaying,
+              let drawable = vlcPlayer.drawable as? UIView else {
+            return
+        }
         
-        // VLC에서 현재 프레임을 UIImage로 캡처
-        // 실제 VLCKit에서는 더 효율적인 방법을 사용해야 함
-        
-        // 임시 구현: VLC drawable view에서 스냅샷 생성
+        // Extract frame from VLC drawable
         DispatchQueue.main.async { [weak self] in
-            if let drawable = vlcPlayer.drawable as? UIView {
-                let image = drawable.asImage()
-                self?.processFrameImage(image)
-            }
+            self?.processDrawableView(drawable)
         }
     }
     
-    private func processFrameImage(_ image: UIImage) {
-        // UIImage를 CVPixelBuffer로 변환
-        guard let pixelBuffer = image.toCVPixelBuffer() else { return }
+    private func processDrawableView(_ view: UIView) {
+        // Create sample buffer from view
+        guard let pixelBuffer = createPixelBuffer(from: view) else { return }
         
-        // CVPixelBuffer를 CMSampleBuffer로 변환
-        if let sampleBuffer = pixelBuffer.toCMSampleBuffer() {
-            delegate?.didExtractFrame(sampleBuffer)
-        }
-    }
-}
-
-// MARK: - Frame Extraction Delegate
-protocol VideoFrameExtractionDelegate: AnyObject {
-    func didExtractFrame(_ sampleBuffer: CMSampleBuffer)
-}
-
-extension PictureInPictureManager: VideoFrameExtractionDelegate {
-    func didExtractFrame(_ sampleBuffer: CMSampleBuffer) {
-        processSampleBuffer(sampleBuffer)
-    }
-}
-
-// MARK: - Helper Extensions
-extension UIView {
-    func asImage() -> UIImage {
-        UIGraphicsBeginImageContextWithOptions(bounds.size, false, UIScreen.main.scale)
-        defer { UIGraphicsEndImageContext() }
-        
-        if let context = UIGraphicsGetCurrentContext() {
-            layer.render(in: context)
+        // Create CMSampleBuffer
+        if let sampleBuffer = createSampleBuffer(from: pixelBuffer) {
+            delegate?.didExtractSampleBuffer(sampleBuffer)
         }
         
-        return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
+        frameNumber += 1
     }
-}
-
-extension UIImage {
-    func toCVPixelBuffer() -> CVPixelBuffer? {
-        let attrs = [
-            kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue
-        ] as CFDictionary
+    
+    // MARK: - Buffer Creation
+    
+    private func createPixelBuffer(from view: UIView) -> CVPixelBuffer? {
+        let width = Int(view.bounds.width * UIScreen.main.scale)
+        let height = Int(view.bounds.height * UIScreen.main.scale)
         
+        // Get pixel buffer from pool
         var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            Int(size.width),
-            Int(size.height),
-            kCVPixelFormatType_32ARGB,
-            attrs,
-            &pixelBuffer
-        )
         
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            return nil
+        if let pool = pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        } else {
+            // Create pixel buffer without pool
+            let attrs = [
+                kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]
+            ] as CFDictionary
+            
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                width,
+                height,
+                kCVPixelFormatType_32ARGB,
+                attrs,
+                &pixelBuffer
+            )
         }
+        
+        guard let buffer = pixelBuffer else { return nil }
         
         CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+        defer {
+            CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+        }
+        
         let pixelData = CVPixelBufferGetBaseAddress(buffer)
         
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: pixelData,
-            width: Int(size.width),
-            height: Int(size.height),
+            width: width,
+            height: height,
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: rgbColorSpace,
             bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
         ) else {
-            CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
             return nil
         }
         
-        context.translateBy(x: 0, y: size.height)
-        context.scaleBy(x: 1.0, y: -1.0)
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: UIScreen.main.scale, y: -UIScreen.main.scale)
         
         UIGraphicsPushContext(context)
-        draw(in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+        view.layer.render(in: context)
         UIGraphicsPopContext()
-        
-        CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
         
         return buffer
     }
-}
-
-extension CVPixelBuffer {
-    func toCMSampleBuffer() -> CMSampleBuffer? {
-        var formatDescription: CMVideoFormatDescription?
-        let status = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: self,
-            formatDescriptionOut: &formatDescription
-        )
-        
-        guard status == noErr, let formatDesc = formatDescription else {
-            return nil
+    
+    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        // Create or update format description
+        if videoFormatDescription == nil {
+            CMVideoFormatDescriptionCreateForImageBuffer(
+                allocator: kCFAllocatorDefault,
+                imageBuffer: pixelBuffer,
+                formatDescriptionOut: &videoFormatDescription
+            )
         }
         
-        var sampleBuffer: CMSampleBuffer?
-        let presentationTime = CMTime(seconds: CACurrentMediaTime(), preferredTimescale: 1000000)
+        guard let formatDesc = videoFormatDescription else { return nil }
         
-        let sampleTimingInfo = CMSampleTimingInfo(
-            duration: CMTime(seconds: 1.0/30.0, preferredTimescale: 1000000),
+        // Calculate presentation time
+        let presentationTime = CMTime(
+            value: CMTimeValue(frameNumber),
+            timescale: CMTimeScale(frameRate)
+        )
+        
+        // Create timing info
+        var timingInfo = CMSampleTimingInfo(
+            duration: CMTime(seconds: 1.0/frameRate, preferredTimescale: 600),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: .invalid
         )
         
-        let createStatus = CMSampleBufferCreateReadyWithImageBuffer(
+        // Create sample buffer
+        var sampleBuffer: CMSampleBuffer?
+        let status = CMSampleBufferCreateReadyWithImageBuffer(
             allocator: kCFAllocatorDefault,
-            imageBuffer: self,
+            imageBuffer: pixelBuffer,
             formatDescription: formatDesc,
-            sampleTiming: [sampleTimingInfo],
+            sampleTiming: &timingInfo,
             sampleBufferOut: &sampleBuffer
         )
         
-        guard createStatus == noErr else {
+        guard status == noErr, let buffer = sampleBuffer else {
+            print("Failed to create sample buffer: \(status)")
             return nil
         }
         
-        // Display immediately 속성 설정
-        if let buffer = sampleBuffer,
-           let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true),
-           CFArrayGetCount(attachmentsArray) > 0 {
-            let attachments = unsafeBitCast(CFArrayGetValueAtIndex(attachmentsArray, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(attachments, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(), Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        // Set display immediately attachment for live streaming
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true) {
+            let dict = unsafeBitCast(
+                CFArrayGetValueAtIndex(attachments, 0),
+                to: CFMutableDictionary.self
+            )
+            CFDictionarySetValue(
+                dict,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
         }
         
-        return sampleBuffer
+        return buffer
+    }
+    
+    deinit {
+        stopExtraction()
+        videoDecompressionSession = nil
+        pixelBufferPool = nil
+    }
+}
+
+// MARK: - RTSP Sample Buffer Delegate
+protocol RTSPSampleBufferDelegate: AnyObject {
+    func didExtractSampleBuffer(_ sampleBuffer: CMSampleBuffer)
+}
+
+extension PictureInPictureManager: RTSPSampleBufferDelegate {
+    func didExtractSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        processSampleBuffer(sampleBuffer)
+    }
+}
+
+// MARK: - VLC Video Callback Bridge (Advanced Implementation)
+extension RTSPSampleBufferExtractor {
+    
+    // This would be the actual implementation using VLC's video callbacks
+    // In a production app, you'd need to bridge to VLC's C API
+    
+    func setupAdvancedVideoCallbacks() {
+        // Example of what the actual implementation would look like:
+        /*
+        guard let player = vlcPlayer else { return }
+        
+        // Set up video format callback
+        libvlc_video_set_format_callbacks(
+            player.media?.mediaPlayer,
+            videoFormatCallback,
+            videoCleanupCallback
+        )
+        
+        // Set up video display callback
+        libvlc_video_set_callbacks(
+            player.media?.mediaPlayer,
+            videoLockCallback,
+            videoUnlockCallback,
+            videoDisplayCallback,
+            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        )
+        */
+    }
+    
+    // These would be the actual callback functions
+    /*
+    private let videoLockCallback: libvlc_video_lock_cb = { opaque, planes in
+        // Lock and provide buffer for VLC to decode into
+    }
+    
+    private let videoUnlockCallback: libvlc_video_unlock_cb = { opaque, picture, planes in
+        // Unlock buffer after VLC has decoded frame
+    }
+    
+    private let videoDisplayCallback: libvlc_video_display_cb = { opaque, picture in
+        // Process the decoded frame and create CMSampleBuffer
+    }
+    */
+}
+
+// MARK: - H.264/H.265 NAL Unit Parser (For Direct Stream Processing)
+class NALUnitParser {
+    
+    enum NALUnitType: UInt8 {
+        // H.264
+        case h264SPS = 7
+        case h264PPS = 8
+        case h264IDR = 5
+        case h264NonIDR = 1
+        
+        // H.265
+        case h265VPS = 32
+        case h265SPS = 33
+        case h265PPS = 34
+        case h265IDR_W_RADL = 19
+        case h265IDR_N_LP = 20
+    }
+    
+    static func parseNALUnits(from data: Data) -> [(type: NALUnitType, data: Data)] {
+        var nalUnits: [(type: NALUnitType, data: Data)] = []
+        
+        // Find NAL unit start codes (0x00 0x00 0x00 0x01)
+        let startCode: [UInt8] = [0x00, 0x00, 0x00, 0x01]
+        var currentIndex = 0
+        
+        while currentIndex < data.count - 4 {
+            // Check for start code
+            if data[currentIndex..<currentIndex+4].elementsEqual(startCode) {
+                // Found NAL unit
+                let nalStart = currentIndex + 4
+                
+                // Find next start code
+                var nalEnd = data.count
+                for i in (nalStart + 4)..<data.count - 3 {
+                    if data[i..<i+4].elementsEqual(startCode) {
+                        nalEnd = i
+                        break
+                    }
+                }
+                
+                // Extract NAL unit
+                let nalData = data[nalStart..<nalEnd]
+                if !nalData.isEmpty {
+                    let nalType = nalData[0] & 0x1F // H.264 NAL type
+                    if let type = NALUnitType(rawValue: nalType) {
+                        nalUnits.append((type: type, data: Data(nalData)))
+                    }
+                }
+                
+                currentIndex = nalEnd
+            } else {
+                currentIndex += 1
+            }
+        }
+        
+        return nalUnits
+    }
+    
+    static func createFormatDescription(sps: Data, pps: Data, vps: Data? = nil) -> CMVideoFormatDescription? {
+        var formatDescription: CMFormatDescription?
+        
+        if let vps = vps {
+            // H.265
+            let parameterSetPointers: [UnsafePointer<UInt8>] = [
+                vps.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) },
+                sps.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) },
+                pps.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) }
+            ]
+            let parameterSetSizes: [Int] = [vps.count, sps.count, pps.count]
+            
+            CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                allocator: kCFAllocatorDefault,
+                parameterSetCount: 3,
+                parameterSetPointers: parameterSetPointers,
+                parameterSetSizes: parameterSetSizes,
+                nalUnitHeaderLength: 4,
+                extensions: nil,
+                formatDescriptionOut: &formatDescription
+            )
+        } else {
+            // H.264
+            let parameterSetPointers: [UnsafePointer<UInt8>] = [
+                sps.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) },
+                pps.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) }
+            ]
+            let parameterSetSizes: [Int] = [sps.count, pps.count]
+            
+            CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                allocator: kCFAllocatorDefault,
+                parameterSetCount: 2,
+                parameterSetPointers: parameterSetPointers,
+                parameterSetSizes: parameterSetSizes,
+                nalUnitHeaderLength: 4,
+                formatDescriptionOut: &formatDescription
+            )
+        }
+        
+        return formatDescription
     }
 }
