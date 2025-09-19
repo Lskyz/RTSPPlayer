@@ -5,152 +5,156 @@ import AVKit
 import CoreMedia
 import VideoToolbox
 
-// MARK: - RTSP Player UIView with Direct Sample Buffer Support
+// MARK: - Enhanced RTSP Player UIView
 class RTSPPlayerUIView: UIView {
     
+    // VLC Components
     private var mediaPlayer: VLCMediaPlayer?
     private var media: VLCMedia?
     
-    // PiP and Sample Buffer
-    private var pipManager: PictureInPictureManager?
-    private var isPiPConfigured = false
+    // PiP Integration
+    private let pipManager = PictureInPictureManager.shared
+    private var isPiPSetup = false
     
-    // Direct RTSP Sample Buffer Processing
-    private var sampleBufferProcessor: RTSPDirectSampleBufferProcessor?
-    private var isProcessingFrames = false
+    // Sample Buffer Processing
+    private var renderingLayer: AVSampleBufferDisplayLayer?
+    private let sampleBufferQueue = DispatchQueue(label: "com.rtspplayer.samplebuffer", qos: .userInteractive)
     
-    // Stream info
-    private var streamCodec: VideoCodec = .unknown
-    private var streamResolution: CGSize = .zero
-    
-    enum VideoCodec {
-        case h264
-        case h265
-        case unknown
-    }
-    
-    // Low latency options optimized for sample buffer extraction
+    // Performance Optimization
     private let lowLatencyOptions = [
         "network-caching": "100",
         "rtsp-caching": "100",
         "tcp-caching": "100",
         "realrtsp-caching": "100",
-        "clock-jitter": "100",
         "rtsp-tcp": "",
-        "avcodec-hw": "videotoolbox",  // Force VideoToolbox hardware decoding
+        "avcodec-hw": "videotoolbox",      // Use VideoToolbox for H.264/H.265
+        "avcodec-threads": "auto",
         "clock-synchro": "0",
         "avcodec-skiploopfilter": "0",
         "avcodec-skip-frame": "0",
         "avcodec-skip-idct": "0",
-        "avcodec-fast": "",              // Enable fast decoding
-        "sout-x264-preset": "ultrafast", // For re-encoding if needed
-        "sout-x264-tune": "zerolatency", // Zero latency tuning
-        "live-caching": "100",           // Live stream caching
-        "file-caching": "100"            // File caching
+        "drop-late-frames": "0",
+        "skip-frames": "0"
     ]
+    
+    // Stream Info
+    private var streamInfo = StreamInfo()
     
     override init(frame: CGRect) {
         super.init(frame: frame)
-        setupPlayer()
-        setupPiPManager()
+        setupView()
     }
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setupPlayer()
-        setupPiPManager()
+        setupView()
     }
     
     // MARK: - Setup
     
-    private func setupPlayer() {
+    private func setupView() {
         backgroundColor = .black
-        
-        // Initialize VLC media player
+        setupVLCPlayer()
+        setupRenderingLayer()
+        registerNotifications()
+    }
+    
+    private func setupVLCPlayer() {
         mediaPlayer = VLCMediaPlayer()
         mediaPlayer?.drawable = self
-        
-        // Set initial volume
-        mediaPlayer?.audio?.volume = 100
-        
-        // Set delegate
         mediaPlayer?.delegate = self
         
-        // Initialize sample buffer processor
-        setupSampleBufferProcessor()
+        // Set audio volume
+        mediaPlayer?.audio?.volume = 100
         
-        print("RTSP Player initialized with sample buffer support")
+        print("VLC Player initialized")
     }
     
-    private func setupPiPManager() {
-        pipManager = PictureInPictureManager.shared
+    private func setupRenderingLayer() {
+        // Create sample buffer display layer for potential direct rendering
+        renderingLayer = AVSampleBufferDisplayLayer()
+        renderingLayer?.videoGravity = .resizeAspect
+        renderingLayer?.backgroundColor = UIColor.black.cgColor
+        
+        if let renderingLayer = renderingLayer {
+            layer.addSublayer(renderingLayer)
+            renderingLayer.frame = bounds
+            renderingLayer.isHidden = true // Initially hidden, shown when needed
+        }
     }
     
-    private func setupSampleBufferProcessor() {
-        sampleBufferProcessor = RTSPDirectSampleBufferProcessor()
-        sampleBufferProcessor?.delegate = self
+    private func registerNotifications() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
     }
     
-    // MARK: - Playback Methods
+    // MARK: - Playback Control
     
     func play(url: String, username: String? = nil, password: String? = nil) {
-        guard let mediaPlayer = mediaPlayer else { return }
+        stop() // Clean up any existing playback
         
-        // Stop existing playback
-        if mediaPlayer.isPlaying {
-            stop()
-        }
-        
-        // Build authenticated RTSP URL
+        // Build authenticated URL if needed
         let rtspURL = buildAuthenticatedURL(url: url, username: username, password: password)
         
-        guard let url = URL(string: rtspURL) else {
+        guard let mediaURL = URL(string: rtspURL) else {
             print("Invalid URL: \(rtspURL)")
             return
         }
         
-        // Create VLC Media
-        media = VLCMedia(url: url)
-        
-        // Apply optimized options for sample buffer extraction
-        applyOptimizedOptions()
-        
-        // Detect codec from URL or stream
-        detectStreamCodec(from: rtspURL)
+        // Create VLC media with optimizations
+        media = VLCMedia(url: mediaURL)
+        applyStreamOptimizations()
         
         // Set media and start playback
-        mediaPlayer.media = media
-        mediaPlayer.play()
+        mediaPlayer?.media = media
+        mediaPlayer?.play()
         
-        print("Starting RTSP stream with sample buffer extraction: \(rtspURL)")
+        print("Starting RTSP stream: \(rtspURL)")
         
-        // Start sample buffer processing after playback begins
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.startSampleBufferProcessing()
+        // Setup PiP after a short delay to ensure playback has started
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.setupPictureInPicture()
         }
     }
     
     private func buildAuthenticatedURL(url: String, username: String?, password: String?) -> String {
-        guard let username = username, let password = password else {
+        guard let username = username, 
+              let password = password,
+              !username.isEmpty, 
+              !password.isEmpty else {
             return url
         }
         
-        guard var urlComponents = URLComponents(string: url) else {
-            return url
+        if let urlComponents = URLComponents(string: url) {
+            var components = urlComponents
+            var urlString = "\(components.scheme ?? "rtsp")://"
+            urlString += "\(username):\(password)@"
+            urlString += "\(components.host ?? "")"
+            if let port = components.port {
+                urlString += ":\(port)"
+            }
+            urlString += components.path
+            if let query = components.query {
+                urlString += "?\(query)"
+            }
+            return urlString
         }
         
-        var urlString = "\(urlComponents.scheme ?? "rtsp")://"
-        urlString += "\(username):\(password)@"
-        urlString += "\(urlComponents.host ?? "")"
-        if let port = urlComponents.port {
-            urlString += ":\(port)"
-        }
-        urlString += urlComponents.path
-        
-        return urlString
+        return url
     }
     
-    private func applyOptimizedOptions() {
+    private func applyStreamOptimizations() {
         guard let media = media else { return }
         
         // Apply low latency options
@@ -162,153 +166,185 @@ class RTSPPlayerUIView: UIView {
             }
         }
         
-        // Additional options for sample buffer extraction
+        // Additional codec-specific optimizations
         media.addOption("--intf=dummy")
-        media.addOption("--vout=macosx")  // Use native output
         media.addOption("--no-audio-time-stretch")
         media.addOption("--no-network-synchronisation")
         
-        // Enable video filter for frame extraction
-        media.addOption("--video-filter=scene")
-        media.addOption("--scene-format=png")
-        media.addOption("--scene-ratio=1")
+        // H.264/H.265 hardware acceleration
+        media.addOption("--codec=avcodec")
+        media.addOption("--avcodec-hw=videotoolbox")
         
-        print("Applied optimized options for sample buffer extraction")
-    }
-    
-    private func detectStreamCodec(from url: String) {
-        let lowercasedURL = url.lowercased()
-        
-        if lowercasedURL.contains("h264") || lowercasedURL.contains("avc") {
-            streamCodec = .h264
-        } else if lowercasedURL.contains("h265") || lowercasedURL.contains("hevc") {
-            streamCodec = .h265
-        } else {
-            // Try to detect from stream metadata
-            streamCodec = .unknown
-        }
-        
-        print("Detected codec: \(streamCodec)")
-    }
-    
-    // MARK: - Sample Buffer Processing
-    
-    private func startSampleBufferProcessing() {
-        guard let mediaPlayer = mediaPlayer,
-              mediaPlayer.isPlaying,
-              !isProcessingFrames else { return }
-        
-        isProcessingFrames = true
-        
-        // Configure PiP with RTSP sample buffer support
-        configurePiPWithSampleBuffer()
-        
-        // Start direct frame processing
-        sampleBufferProcessor?.startProcessing(with: mediaPlayer)
-        
-        print("Started sample buffer processing")
-    }
-    
-    private func configurePiPWithSampleBuffer() {
-        guard !isPiPConfigured,
-              let mediaPlayer = mediaPlayer else { return }
-        
-        // Setup PiP with RTSP sample buffer extractor
-        pipManager?.setupPiPForRTSPStream(
-            vlcPlayer: mediaPlayer,
-            streamURL: media?.url?.absoluteString ?? ""
-        )
-        
-        isPiPConfigured = true
-        print("Configured PiP with RTSP sample buffer support")
+        print("Stream optimizations applied")
     }
     
     func stop() {
-        sampleBufferProcessor?.stopProcessing()
-        isProcessingFrames = false
-        
         mediaPlayer?.stop()
         media = nil
-        isPiPConfigured = false
-        
-        print("Stopped RTSP stream and sample buffer processing")
+        isPiPSetup = false
+        streamInfo.reset()
+        print("Playback stopped")
     }
     
     func pause() {
         mediaPlayer?.pause()
-        sampleBufferProcessor?.pauseProcessing()
     }
     
     func resume() {
         mediaPlayer?.play()
-        sampleBufferProcessor?.resumeProcessing()
     }
     
     func setVolume(_ volume: Int32) {
-        mediaPlayer?.audio?.volume = volume
+        mediaPlayer?.audio?.volume = max(0, min(200, volume))
     }
     
-    func isPlaying() -> Bool {
-        return mediaPlayer?.isPlaying ?? false
+    // MARK: - Picture in Picture Setup
+    
+    private func setupPictureInPicture() {
+        guard let mediaPlayer = mediaPlayer,
+              mediaPlayer.isPlaying,
+              !isPiPSetup else { return }
+        
+        // Setup PiP with the new sample buffer approach
+        pipManager.setupPiPForVLCPlayer(mediaPlayer, in: self)
+        isPiPSetup = true
+        
+        print("Picture in Picture configured")
     }
     
     // MARK: - Stream Information
     
-    func getStreamInfo() -> StreamInfo {
-        var info = StreamInfo()
+    func updateStreamInfo() {
+        guard let mediaPlayer = mediaPlayer else { return }
         
-        guard let mediaPlayer = mediaPlayer else { return info }
-        
-        // Basic info
-        info.isPlaying = mediaPlayer.isPlaying
-        info.codec = streamCodec
+        streamInfo.isPlaying = mediaPlayer.isPlaying
+        streamInfo.position = mediaPlayer.position
+        streamInfo.time = mediaPlayer.time
         
         // Video info
         let videoSize = mediaPlayer.videoSize
         if videoSize.width > 0 && videoSize.height > 0 {
-            info.resolution = videoSize
-            streamResolution = videoSize
+            streamInfo.videoResolution = videoSize
+            streamInfo.hasVideo = true
         }
         
-        // Track info
-        info.hasVideo = (mediaPlayer.videoTrackNames.count ?? 0) > 0
-        info.hasAudio = (mediaPlayer.audioTrackNames.count ?? 0) > 0
+        // Audio info
+        streamInfo.hasAudio = (mediaPlayer.audioTrackIndexes?.count ?? 0) > 0
         
-        // Frame rate (estimate from VLC)
-        if let fps = mediaPlayer.media?.statistics?.demuxBitrate, fps > 0 {
-            info.frameRate = Double(fps)
+        // Codec detection
+        if let media = media {
+            streamInfo.codec = detectCodec(from: media)
         }
-        
-        // Bitrate
-        if let stats = mediaPlayer.media?.statistics {
-            info.bitrate = Int(stats.demuxBitrate)
-        }
-        
-        return info
     }
     
-    func updateLatencySettings(networkCaching: Int) {
-        guard let currentMedia = media?.url?.absoluteString,
-              isPlaying() else { return }
+    private func detectCodec(from media: VLCMedia) -> String {
+        // Try to detect codec from media metadata
+        if let tracksInfo = media.tracksInformation as? [[String: Any]] {
+            for track in tracksInfo {
+                if let type = track["type"] as? String,
+                   type == "video",
+                   let codec = track["codec"] as? String {
+                    if codec.contains("h264") || codec.contains("avc1") {
+                        return "H.264"
+                    } else if codec.contains("h265") || codec.contains("hevc") {
+                        return "H.265"
+                    }
+                }
+            }
+        }
         
-        // Update options and restart stream
-        stop()
+        // Fallback to URL hints
+        let urlString = media.url?.absoluteString.lowercased() ?? ""
+        if urlString.contains("h264") {
+            return "H.264"
+        } else if urlString.contains("h265") || urlString.contains("hevc") {
+            return "H.265"
+        }
+        
+        return "Unknown"
+    }
+    
+    func getStreamInfo() -> StreamInfo {
+        updateStreamInfo()
+        return streamInfo
+    }
+    
+    // MARK: - Network Statistics
+    
+    func getNetworkStats() -> NetworkStats {
+        var stats = NetworkStats()
+        
+        if let mediaPlayer = mediaPlayer {
+            // Basic stats from VLC
+            stats.isConnected = mediaPlayer.isPlaying
+            stats.bufferLevel = 0.0 // VLC doesn't expose buffer level directly
+            
+            // Calculate bitrate if possible
+            if let media = media, media.length.intValue > 0 {
+                // Rough estimation
+                stats.bitrate = 0
+            }
+        }
+        
+        return stats
+    }
+    
+    // MARK: - Advanced Features
+    
+    func updateLatencySettings(networkCaching: Int) {
+        guard let currentURL = media?.url?.absoluteString,
+              mediaPlayer?.isPlaying == true else { return }
         
         // Update caching values
         var updatedOptions = lowLatencyOptions
         updatedOptions["network-caching"] = "\(networkCaching)"
         updatedOptions["rtsp-caching"] = "\(networkCaching)"
         updatedOptions["tcp-caching"] = "\(networkCaching)"
-        updatedOptions["realrtsp-caching"] = "\(networkCaching)"
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.play(url: currentMedia)
+        // Restart with new settings
+        stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.play(url: currentURL)
         }
     }
     
+    func captureSnapshot() -> UIImage? {
+        // Render current view to image
+        let renderer = UIGraphicsImageRenderer(bounds: bounds)
+        return renderer.image { context in
+            layer.render(in: context.cgContext)
+        }
+    }
+    
+    // MARK: - Layout
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        renderingLayer?.frame = bounds
+    }
+    
+    // MARK: - Background Handling
+    
+    @objc private func handleEnterBackground() {
+        // Continue playback in background if PiP is active
+        if !pipManager.isPiPActive {
+            // Optionally pause to save resources
+            // pause()
+        }
+    }
+    
+    @objc private func handleEnterForeground() {
+        // Resume if needed
+        if mediaPlayer?.state == .paused {
+            // resume()
+        }
+    }
+    
+    // MARK: - Cleanup
+    
     deinit {
+        NotificationCenter.default.removeObserver(self)
         stop()
-        sampleBufferProcessor = nil
         mediaPlayer = nil
         print("RTSPPlayerUIView deinitialized")
     }
@@ -320,44 +356,38 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     func mediaPlayerStateChanged(_ aNotification: Notification!) {
         guard let player = aNotification.object as? VLCMediaPlayer else { return }
         
-        switch player.state {
+        let state = player.state
+        streamInfo.playerState = state
+        
+        switch state {
         case .opening:
             print("VLC: Opening stream...")
+            onStreamOpening()
             
         case .buffering:
-            if let bufferPercent = player.media?.statistics?.demuxBitrate {
-                print("VLC: Buffering... \(bufferPercent)%")
-            }
+            let bufferProgress = player.position * 100
+            print("VLC: Buffering... \(Int(bufferProgress))%")
+            onStreamBuffering(progress: bufferProgress)
             
         case .playing:
             print("VLC: Playing")
-            
-            // Extract stream metadata
-            if streamCodec == .unknown {
-                detectCodecFromMetadata()
-            }
-            
-            // Start sample buffer processing if not started
-            if !isProcessingFrames {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.startSampleBufferProcessing()
-                }
-            }
+            onStreamPlaying()
             
         case .paused:
             print("VLC: Paused")
+            onStreamPaused()
             
         case .stopped:
             print("VLC: Stopped")
+            onStreamStopped()
             
         case .error:
             print("VLC: Error occurred")
-            if let errorDescription = player.media?.statistics?.decodedAudio {
-                print("Error details: \(errorDescription)")
-            }
+            onStreamError()
             
         case .ended:
             print("VLC: Stream ended")
+            onStreamEnded()
             
         @unknown default:
             print("VLC: Unknown state")
@@ -365,284 +395,113 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     }
     
     func mediaPlayerTimeChanged(_ aNotification: Notification!) {
-        // Handle time changes if needed
-    }
-    
-    private func detectCodecFromMetadata() {
-        guard let player = mediaPlayer,
-              let tracks = player.media?.tracksInformation as? [[String: Any]] else { return }
-        
-        for track in tracks {
-            if let type = track["type"] as? String, type == "video" {
-                if let codec = track["codec"] as? String {
-                    if codec.contains("h264") || codec.contains("avc") {
-                        streamCodec = .h264
-                    } else if codec.contains("h265") || codec.contains("hevc") {
-                        streamCodec = .h265
-                    }
-                    print("Detected codec from metadata: \(codec)")
-                    break
-                }
-            }
-        }
-    }
-}
-
-// MARK: - RTSP Direct Sample Buffer Processor
-class RTSPDirectSampleBufferProcessor: NSObject {
-    
-    weak var delegate: RTSPSampleBufferProcessorDelegate?
-    
-    private var isProcessing = false
-    private var isPaused = false
-    private weak var vlcPlayer: VLCMediaPlayer?
-    
-    // Video processing
-    private let processingQueue = DispatchQueue(label: "com.rtspplayer.processing", qos: .userInteractive)
-    private var frameTimer: Timer?
-    
-    // Direct frame access through VLC
-    private var videoOutputCallback: UnsafeMutableRawPointer?
-    
-    func startProcessing(with player: VLCMediaPlayer) {
-        guard !isProcessing else { return }
-        
-        vlcPlayer = player
-        isProcessing = true
-        isPaused = false
-        
-        // Setup direct video output access
-        setupDirectVideoAccess()
-        
-        // Start frame extraction timer
-        startFrameExtraction()
-    }
-    
-    func stopProcessing() {
-        isProcessing = false
-        frameTimer?.invalidate()
-        frameTimer = nil
-        cleanupDirectVideoAccess()
-    }
-    
-    func pauseProcessing() {
-        isPaused = true
-    }
-    
-    func resumeProcessing() {
-        isPaused = false
-    }
-    
-    private func setupDirectVideoAccess() {
-        // This is where we'd set up direct access to VLC's video output
-        // In a production app, this would involve VLC's video callback API
-        print("Setting up direct video access for sample buffer extraction")
-    }
-    
-    private func cleanupDirectVideoAccess() {
-        videoOutputCallback = nil
-    }
-    
-    private func startFrameExtraction() {
-        // Use CADisplayLink for better frame timing
-        DispatchQueue.main.async { [weak self] in
-            let displayLink = CADisplayLink(target: self!, selector: #selector(self?.extractFrame))
-            displayLink.preferredFramesPerSecond = 30
-            displayLink.add(to: .current, forMode: .common)
-            // Store as timer for compatibility
-            self?.frameTimer = Timer(timeInterval: 1.0/30.0, repeats: false, block: { _ in })
+        // Update time if needed
+        if let player = aNotification.object as? VLCMediaPlayer {
+            streamInfo.time = player.time
+            streamInfo.position = player.position
         }
     }
     
-    @objc private func extractFrame() {
-        guard isProcessing, !isPaused,
-              let player = vlcPlayer,
-              player.isPlaying else { return }
-        
-        processingQueue.async { [weak self] in
-            self?.processCurrentFrame()
-        }
+    // MARK: - State Handlers
+    
+    private func onStreamOpening() {
+        // Prepare UI for stream opening
     }
     
-    private func processCurrentFrame() {
-        // Extract frame data from VLC
-        // This would typically use VLC's video callback API
-        
-        // For now, capture from drawable
-        DispatchQueue.main.async { [weak self] in
-            guard let drawable = self?.vlcPlayer?.drawable as? UIView else { return }
-            
-            if let sampleBuffer = self?.createSampleBuffer(from: drawable) {
-                self?.delegate?.didProcessSampleBuffer(sampleBuffer)
-            }
-        }
+    private func onStreamBuffering(progress: Float) {
+        // Update buffering indicator
     }
     
-    private func createSampleBuffer(from view: UIView) -> CMSampleBuffer? {
-        // Create CVPixelBuffer from view
-        guard let pixelBuffer = view.createPixelBuffer() else { return nil }
+    private func onStreamPlaying() {
+        // Setup PiP if not already done
+        if !isPiPSetup {
+            setupPictureInPicture()
+        }
         
-        // Create CMSampleBuffer
-        return pixelBuffer.createSampleBuffer()
+        // Update stream info
+        updateStreamInfo()
+    }
+    
+    private func onStreamPaused() {
+        // Handle pause state
+    }
+    
+    private func onStreamStopped() {
+        // Clean up resources
+        isPiPSetup = false
+    }
+    
+    private func onStreamError() {
+        // Handle error state
+        // Could implement retry logic here
+    }
+    
+    private func onStreamEnded() {
+        // Handle stream end
     }
 }
 
-// MARK: - Sample Buffer Processor Delegate
-protocol RTSPSampleBufferProcessorDelegate: AnyObject {
-    func didProcessSampleBuffer(_ sampleBuffer: CMSampleBuffer)
-}
-
-extension RTSPPlayerUIView: RTSPSampleBufferProcessorDelegate {
-    func didProcessSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        // Forward to PiP manager if needed
-        print("Processed sample buffer")
-    }
-}
-
-// MARK: - Stream Info
+// MARK: - Stream Info Model
 struct StreamInfo {
     var isPlaying: Bool = false
-    var codec: RTSPPlayerUIView.VideoCodec = .unknown
-    var resolution: CGSize = .zero
-    var frameRate: Double = 0.0
-    var bitrate: Int = 0
     var hasVideo: Bool = false
     var hasAudio: Bool = false
+    var videoResolution: CGSize = .zero
+    var codec: String = "Unknown"
+    var position: Float = 0.0
+    var time: VLCTime?
+    var playerState: VLCMediaPlayerState = .stopped
     
-    var resolutionString: String {
-        if resolution.width > 0 && resolution.height > 0 {
-            return "\(Int(resolution.width))x\(Int(resolution.height))"
+    mutating func reset() {
+        isPlaying = false
+        hasVideo = false
+        hasAudio = false
+        videoResolution = .zero
+        codec = "Unknown"
+        position = 0.0
+        time = nil
+        playerState = .stopped
+    }
+    
+    var resolutionText: String {
+        if videoResolution == .zero {
+            return "Unknown"
+        }
+        return "\(Int(videoResolution.width))x\(Int(videoResolution.height))"
+    }
+    
+    var qualityText: String {
+        let width = Int(videoResolution.width)
+        let height = Int(videoResolution.height)
+        
+        if width >= 3840 && height >= 2160 {
+            return "4K UHD"
+        } else if width >= 1920 && height >= 1080 {
+            return "Full HD"
+        } else if width >= 1280 && height >= 720 {
+            return "HD"
+        } else if width > 0 && height > 0 {
+            return "SD"
         }
         return "Unknown"
     }
-    
-    var qualityString: String {
-        if resolution.width >= 3840 {
-            return "4K UHD"
-        } else if resolution.width >= 1920 {
-            return "Full HD"
-        } else if resolution.width >= 1280 {
-            return "HD"
-        } else {
-            return "SD"
-        }
-    }
-    
-    var codecString: String {
-        switch codec {
-        case .h264:
-            return "H.264/AVC"
-        case .h265:
-            return "H.265/HEVC"
-        case .unknown:
-            return "Unknown"
-        }
-    }
 }
 
-// MARK: - Helper Extensions
-extension UIView {
-    func createPixelBuffer() -> CVPixelBuffer? {
-        let width = Int(bounds.width * UIScreen.main.scale)
-        let height = Int(bounds.height * UIScreen.main.scale)
-        
-        let attrs = [
-            kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
-            kCVPixelBufferMetalCompatibilityKey: kCFBooleanTrue
-        ] as CFDictionary
-        
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attrs,
-            &pixelBuffer
-        )
-        
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            return nil
+// MARK: - Network Statistics Model
+struct NetworkStats {
+    var isConnected: Bool = false
+    var bitrate: Int = 0
+    var bufferLevel: Float = 0.0
+    var packetsLost: Int = 0
+    var packetsReceived: Int = 0
+    
+    var bitrateText: String {
+        if bitrate > 1_000_000 {
+            return String(format: "%.1f Mbps", Double(bitrate) / 1_000_000.0)
+        } else if bitrate > 1000 {
+            return String(format: "%.0f Kbps", Double(bitrate) / 1000.0)
         }
-        
-        CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
-        defer {
-            CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
-        }
-        
-        let pixelData = CVPixelBufferGetBaseAddress(buffer)
-        
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: pixelData,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: rgbColorSpace,
-            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-        ) else {
-            return nil
-        }
-        
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: UIScreen.main.scale, y: -UIScreen.main.scale)
-        
-        layer.render(in: context)
-        
-        return buffer
-    }
-}
-
-extension CVPixelBuffer {
-    func createSampleBuffer() -> CMSampleBuffer? {
-        var formatDescription: CMVideoFormatDescription?
-        CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: self,
-            formatDescriptionOut: &formatDescription
-        )
-        
-        guard let formatDesc = formatDescription else { return nil }
-        
-        let currentTime = CACurrentMediaTime()
-        let presentationTime = CMTime(seconds: currentTime, preferredTimescale: 600)
-        
-        var timingInfo = CMSampleTimingInfo(
-            duration: CMTime(seconds: 1.0/30.0, preferredTimescale: 600),
-            presentationTimeStamp: presentationTime,
-            decodeTimeStamp: .invalid
-        )
-        
-        var sampleBuffer: CMSampleBuffer?
-        let status = CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: self,
-            formatDescription: formatDesc,
-            sampleTiming: &timingInfo,
-            sampleBufferOut: &sampleBuffer
-        )
-        
-        guard status == noErr, let buffer = sampleBuffer else {
-            return nil
-        }
-        
-        // Mark for immediate display
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true) {
-            let dict = unsafeBitCast(
-                CFArrayGetValueAtIndex(attachments, 0),
-                to: CFMutableDictionary.self
-            )
-            CFDictionarySetValue(
-                dict,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
-            )
-        }
-        
-        return buffer
+        return "\(bitrate) bps"
     }
 }
 
@@ -653,39 +512,68 @@ struct RTSPPlayerView: UIViewRepresentable {
     var username: String?
     var password: String?
     var networkCaching: Int = 100
+    var onStreamInfo: ((StreamInfo) -> Void)?
     
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
+        context.coordinator.playerView = playerView
         return playerView
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
         if isPlaying {
-            if !uiView.isPlaying() && !url.isEmpty {
+            if !uiView.isPlaying && !url.isEmpty {
                 uiView.play(url: url, username: username, password: password)
             }
         } else {
-            if uiView.isPlaying() {
+            if uiView.isPlaying {
                 uiView.pause()
             }
         }
         
-        // Update latency settings
+        // Update latency settings if changed
         uiView.updateLatencySettings(networkCaching: networkCaching)
+        
+        // Report stream info
+        if let onStreamInfo = onStreamInfo {
+            onStreamInfo(uiView.getStreamInfo())
+        }
     }
     
-    static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: ()) {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: Coordinator) {
         uiView.stop()
+    }
+    
+    class Coordinator {
+        weak var playerView: RTSPPlayerUIView?
     }
 }
 
-// MARK: - SwiftUI Preview
-struct RTSPPlayerView_Previews: PreviewProvider {
-    static var previews: some View {
-        RTSPPlayerView(
-            url: .constant("rtsp://example.com/stream"),
-            isPlaying: .constant(true),
-            networkCaching: 100
-        )
+// MARK: - Helper Extensions
+extension RTSPPlayerUIView {
+    
+    var isPlaying: Bool {
+        return mediaPlayer?.isPlaying ?? false
+    }
+    
+    func togglePlayPause() {
+        if isPlaying {
+            pause()
+        } else {
+            resume()
+        }
+    }
+    
+    func reconnect() {
+        guard let currentURL = media?.url?.absoluteString else { return }
+        
+        stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.play(url: currentURL)
+        }
     }
 }
