@@ -1,589 +1,638 @@
-import UIKit
-import SwiftUI
-import VLCKitSPM
 import AVKit
+import UIKit
+import Combine
+import VLCKitSPM
+import VideoToolbox
+import CoreMedia
+import CoreVideo
 
-// MARK: - RTSP Player UIView with Sample Buffer PiP
-class RTSPPlayerUIView: UIView {
+// MARK: - PiP Manager Protocol
+protocol PictureInPictureManagerDelegate: AnyObject {
+    func pipDidStart()
+    func pipDidStop()
+    func pipWillStart()
+    func pipWillStop()
+    func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
+}
+
+// MARK: - Enhanced PiP Manager with Sample Buffer Support
+class PictureInPictureManager: NSObject, ObservableObject {
     
-    // VLC Components
-    private var mediaPlayer: VLCMediaPlayer?
-    private var media: VLCMedia?
+    // Singleton
+    static let shared = PictureInPictureManager()
+    
+    // Published Properties
+    @Published var isPiPSupported: Bool = false
+    @Published var isPiPActive: Bool = false
+    @Published var isPiPPossible: Bool = false
     
     // PiP Components
-    private let pipManager = PictureInPictureManager.shared
-    private var isPiPEnabled = false
+    private var pipController: AVPictureInPictureController?
+    private var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer?
+    private var displayLayerView: UIView?
     
-    // Stream Info
-    private var currentStreamURL: String?
-    private var streamInfo: StreamInfo?
+    // VLC Components
+    private var vlcPlayer: VLCMediaPlayer?
+    private var frameExtractor: VLCFrameExtractor?
     
-    // Performance Monitoring
-    private var performanceMonitor: PerformanceMonitor?
+    // Delegate
+    weak var delegate: PictureInPictureManagerDelegate?
     
-    // Low Latency Options
-    private let lowLatencyOptions: [String: String] = [
-        "network-caching": "150",
-        "rtsp-caching": "150",
-        "tcp-caching": "150",
-        "realrtsp-caching": "150",
-        "clock-jitter": "150",
-        "rtsp-tcp": "",
-        "avcodec-hw": "videotoolbox", // Use VideoToolbox for hardware decoding
-        "clock-synchro": "0",
-        "avcodec-skiploopfilter": "0",
-        "avcodec-skip-frame": "0",
-        "avcodec-skip-idct": "0",
-        "avcodec-threads": "4", // Multi-threading for better performance
-        "sout-mux-caching": "10", // Output mux caching
-        "live-caching": "150" // Live stream caching
-    ]
+    // Cancellables
+    private var cancellables = Set<AnyCancellable>()
     
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupPlayer()
-        setupPerformanceMonitoring()
-    }
+    // Frame Processing
+    private let frameProcessingQueue = DispatchQueue(label: "com.rtspplayer.frame.processing", qos: .userInteractive)
+    private let renderQueue = DispatchQueue(label: "com.rtspplayer.render", qos: .userInteractive)
     
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupPlayer()
-        setupPerformanceMonitoring()
+    // Timing
+    private var timebase: CMTimebase?
+    private var lastPresentationTime = CMTime.zero
+    private let frameDuration = CMTime(value: 1, timescale: 30) // 30 FPS
+    
+    override init() {
+        super.init()
+        checkPiPSupport()
+        setupAudioSession()
     }
     
     // MARK: - Setup
     
-    private func setupPlayer() {
-        backgroundColor = .black
-        
-        // Initialize VLC Media Player
-        mediaPlayer = VLCMediaPlayer()
-        mediaPlayer?.drawable = self
-        mediaPlayer?.audio?.volume = 100
-        mediaPlayer?.delegate = self
-        
-        print("VLC Player initialized")
+    private func checkPiPSupport() {
+        isPiPSupported = AVPictureInPictureController.isPictureInPictureSupported()
+        print("PiP Support: \(isPiPSupported)")
     }
     
-    private func setupPerformanceMonitoring() {
-        performanceMonitor = PerformanceMonitor()
-        performanceMonitor?.startMonitoring()
-    }
-    
-    // MARK: - Playback Control
-    
-    func play(url: String, username: String? = nil, password: String? = nil, networkCaching: Int = 150) {
-        // Stop current playback
-        if mediaPlayer?.isPlaying == true {
-            stop()
+    private func setupAudioSession() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try audioSession.setActive(true)
+            print("Audio session configured for PiP")
+        } catch {
+            print("Failed to setup audio session: \(error)")
         }
+    }
+    
+    // MARK: - Sample Buffer PiP Setup
+    
+    func setupPiPForVLCStream(vlcPlayer: VLCMediaPlayer, in containerView: UIView) {
+        cleanup()
         
-        // Build authenticated URL
-        let authenticatedURL = buildAuthenticatedURL(url: url, username: username, password: password)
+        self.vlcPlayer = vlcPlayer
         
-        guard let mediaURL = URL(string: authenticatedURL) else {
-            print("Invalid URL: \(authenticatedURL)")
+        // Create display layer and view
+        setupDisplayLayer(in: containerView)
+        
+        // Setup frame extractor
+        setupFrameExtractor()
+        
+        // Setup PiP controller
+        if #available(iOS 15.0, *) {
+            setupModernPiPController()
+        } else {
+            setupLegacyPiPController()
+        }
+    }
+    
+    private func setupDisplayLayer(in containerView: UIView) {
+        // Create sample buffer display layer
+        sampleBufferDisplayLayer = AVSampleBufferDisplayLayer()
+        guard let displayLayer = sampleBufferDisplayLayer else {
+            print("Failed to create sample buffer display layer")
             return
         }
         
-        currentStreamURL = authenticatedURL
+        // Configure display layer
+        displayLayer.videoGravity = .resizeAspect
+        displayLayer.backgroundColor = UIColor.black.cgColor
+        displayLayer.frame = containerView.bounds
         
-        // Create VLC Media
-        media = VLCMedia(url: mediaURL)
+        // Create container view for the layer
+        displayLayerView = UIView(frame: containerView.bounds)
+        displayLayerView?.backgroundColor = .clear
+        displayLayerView?.layer.addSublayer(displayLayer)
+        displayLayerView?.isHidden = true // Initially hidden
         
-        // Apply optimizations
-        applyStreamOptimizations(caching: networkCaching)
+        // Add to container
+        containerView.addSubview(displayLayerView!)
         
-        // Set media and play
-        mediaPlayer?.media = media
-        mediaPlayer?.play()
+        // Setup timebase
+        setupTimebase()
         
-        print("Starting stream: \(url)")
-        
-        // Setup PiP after a delay
-        setupPiPAfterDelay()
+        print("Display layer configured")
     }
     
-    private func buildAuthenticatedURL(url: String, username: String?, password: String?) -> String {
-        guard let username = username, let password = password else { return url }
+    private func setupTimebase() {
+        guard let displayLayer = sampleBufferDisplayLayer else { return }
         
-        if let urlComponents = URLComponents(string: url) {
-            let components = urlComponents  // Changed from var to let
-            var urlString = "\(components.scheme ?? "rtsp")://"
-            urlString += "\(username):\(password)@"
-            urlString += "\(components.host ?? "")"
-            if let port = components.port {
-                urlString += ":\(port)"
+        // Create timebase - Fixed: Using non-deprecated API
+        var timebase: CMTimebase?
+        let status = CMTimebaseCreateWithSourceClock(
+            allocator: kCFAllocatorDefault,
+            sourceClock: CMClockGetHostTimeClock(),
+            timebaseOut: &timebase
+        )
+        
+        if status == noErr, let tb = timebase {
+            self.timebase = tb
+            displayLayer.controlTimebase = tb
+            
+            // Set initial time and rate
+            CMTimebaseSetTime(tb, time: .zero)
+            CMTimebaseSetRate(tb, rate: 1.0)
+            
+            print("Timebase configured")
+        }
+    }
+    
+    private func setupFrameExtractor() {
+        frameExtractor = VLCFrameExtractor(vlcPlayer: vlcPlayer!)
+        frameExtractor?.delegate = self
+        print("Frame extractor configured")
+    }
+    
+    @available(iOS 15.0, *)
+    private func setupModernPiPController() {
+        guard let displayLayer = sampleBufferDisplayLayer else { return }
+        
+        let contentSource = AVPictureInPictureController.ContentSource(
+            sampleBufferDisplayLayer: displayLayer,
+            playbackDelegate: self
+        )
+        
+        pipController = AVPictureInPictureController(contentSource: contentSource)
+        configurePiPController()
+        
+        print("Modern PiP controller configured (iOS 15+)")
+    }
+    
+    private func setupLegacyPiPController() {
+        // For iOS 14 and below
+        print("Legacy PiP not fully supported for sample buffer")
+    }
+    
+    private func configurePiPController() {
+        guard let pipController = pipController else { return }
+        
+        pipController.delegate = self
+        
+        if #available(iOS 14.2, *) {
+            pipController.canStartPictureInPictureAutomaticallyFromInline = true
+        }
+        
+        observePiPStates()
+    }
+    
+    private func observePiPStates() {
+        guard let pipController = pipController else { return }
+        
+        pipController.publisher(for: \.isPictureInPicturePossible)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isPossible in
+                self?.isPiPPossible = isPossible
+                print("PiP Possible: \(isPossible)")
             }
-            urlString += components.path
-            return urlString
-        }
+            .store(in: &cancellables)
         
-        return url
-    }
-    
-    private func applyStreamOptimizations(caching: Int) {
-        guard let media = media else { return }
-        
-        // Update caching values
-        var options = lowLatencyOptions
-        options["network-caching"] = "\(caching)"
-        options["rtsp-caching"] = "\(caching)"
-        options["tcp-caching"] = "\(caching)"
-        options["realrtsp-caching"] = "\(caching)"
-        options["live-caching"] = "\(caching)"
-        
-        // Apply all options
-        for (key, value) in options {
-            if value.isEmpty {
-                media.addOption("--\(key)")
-            } else {
-                media.addOption("--\(key)=\(value)")
+        pipController.publisher(for: \.isPictureInPictureActive)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isActive in
+                self?.isPiPActive = isActive
+                print("PiP Active: \(isActive)")
             }
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Public Methods
+    
+    func startPiP() {
+        guard isPiPSupported, isPiPPossible else {
+            print("PiP not available")
+            return
         }
         
-        // Additional codec optimizations
-        media.addOption("--intf=dummy")
-        media.addOption("--no-audio-time-stretch")
-        media.addOption("--no-network-synchronisation")
-        media.addOption("--no-drop-late-frames")
-        media.addOption("--no-skip-frames")
+        // Start frame extraction
+        frameExtractor?.startExtraction()
         
-        print("Applied optimizations with caching: \(caching)ms")
+        // Start PiP
+        pipController?.startPictureInPicture()
+        print("Starting PiP")
     }
     
-    private func setupPiPAfterDelay() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.setupPiP()
+    func stopPiP() {
+        guard isPiPActive else { return }
+        
+        // Stop frame extraction
+        frameExtractor?.stopExtraction()
+        
+        // Stop PiP
+        pipController?.stopPictureInPicture()
+        print("Stopping PiP")
+    }
+    
+    func togglePiP() {
+        if isPiPActive {
+            stopPiP()
+        } else {
+            startPiP()
         }
-    }
-    
-    private func setupPiP() {
-        guard let mediaPlayer = mediaPlayer,
-              mediaPlayer.isPlaying,
-              !isPiPEnabled else { return }
-        
-        // Connect PiP manager to this view
-        pipManager.connectToVLCPlayer(mediaPlayer, containerView: self)
-        isPiPEnabled = true
-        
-        print("PiP setup completed")
-    }
-    
-    func stop() {
-        mediaPlayer?.stop()
-        media = nil
-        currentStreamURL = nil
-        isPiPEnabled = false
-        streamInfo = nil
-        
-        print("Stream stopped")
-    }
-    
-    func pause() {
-        mediaPlayer?.pause()
-    }
-    
-    func resume() {
-        mediaPlayer?.play()
-    }
-    
-    func setVolume(_ volume: Int32) {
-        mediaPlayer?.audio?.volume = volume
-    }
-    
-    func isPlaying() -> Bool {
-        return mediaPlayer?.isPlaying ?? false
-    }
-    
-    // MARK: - Advanced Features
-    
-    func updateNetworkCaching(_ caching: Int) {
-        guard let currentURL = currentStreamURL, isPlaying() else { return }
-        
-        // Restart with new caching settings
-        let wasPlaying = isPlaying()
-        stop()
-        
-        if wasPlaying {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.play(url: currentURL, networkCaching: caching)
-            }
-        }
-    }
-    
-    func getStreamInfo() -> StreamInfo? {
-        guard let mediaPlayer = mediaPlayer, mediaPlayer.isPlaying else { return nil }
-        
-        var info = StreamInfo()
-        
-        // Video info
-        let videoSize = mediaPlayer.videoSize
-        info.resolution = CGSize(width: CGFloat(videoSize.width), height: CGFloat(videoSize.height))
-        info.videoCodec = detectVideoCodec()
-        
-        // Audio info - Fixed: audioTrackNames is not optional
-        if let audioTracks = mediaPlayer.audioTrackNames as? [String],
-           let audioTrack = audioTracks.first {
-            info.audioTrack = audioTrack
-        }
-        
-        // Playback info
-        info.position = mediaPlayer.position
-        info.time = TimeInterval(mediaPlayer.time.intValue / 1000)
-        
-        // Network info
-        info.isBuffering = mediaPlayer.state == .buffering
-        info.droppedFrames = getDroppedFrames()
-        
-        // Performance info
-        if let performance = performanceMonitor?.getCurrentMetrics() {
-            info.cpuUsage = performance.cpuUsage
-            info.memoryUsage = performance.memoryUsage
-            info.fps = performance.fps
-        }
-        
-        self.streamInfo = info
-        return info
-    }
-    
-    private func detectVideoCodec() -> String {
-        // Try to detect codec from media info
-        if let media = media {
-            // Parse codec info from VLC media (simplified)
-            let url = media.url?.absoluteString ?? ""
-            if url.contains("h264") || url.contains("avc") {
-                return "H.264/AVC"
-            } else if url.contains("h265") || url.contains("hevc") {
-                return "H.265/HEVC"
-            }
-        }
-        
-        return "Unknown"
-    }
-    
-    private func getDroppedFrames() -> Int {
-        // VLC doesn't directly expose dropped frames count
-        // This would need custom implementation or VLC library modification
-        return 0
-    }
-    
-    // MARK: - PiP Control
-    
-    func startPictureInPicture() {
-        if !isPiPEnabled {
-            setupPiP()
-        }
-        
-        if pipManager.canStartPiP {
-            pipManager.startPiP()
-        }
-    }
-    
-    func stopPictureInPicture() {
-        pipManager.stopPiP()
-    }
-    
-    func togglePictureInPicture() {
-        pipManager.togglePiP()
-    }
-    
-    var isPiPActive: Bool {
-        return pipManager.isPiPActive
-    }
-    
-    var isPiPPossible: Bool {
-        return pipManager.isPiPPossible
     }
     
     // MARK: - Cleanup
     
-    deinit {
-        stop()
-        performanceMonitor?.stopMonitoring()
-        mediaPlayer = nil
-        print("RTSPPlayerUIView deinitialized")
-    }
-}
-
-// MARK: - VLCMediaPlayerDelegate
-extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
-    
-    // Fixed: Changed parameter from Notification! to Notification to match protocol
-    func mediaPlayerStateChanged(_ aNotification: Notification) {
-        guard let player = aNotification.object as? VLCMediaPlayer else { return }
+    private func cleanup() {
+        frameExtractor?.stopExtraction()
+        frameExtractor = nil
         
-        // Fixed: Made switch exhaustive by adding .esAdded case
-        switch player.state {
-        case .opening:
-            print("VLC: Opening stream...")
-            streamInfo?.state = "Opening"
-            
-        case .buffering:
-            let bufferPercent = player.position * 100
-            print("VLC: Buffering... \(Int(bufferPercent))%")
-            streamInfo?.state = "Buffering"
-            
-        case .playing:
-            print("VLC: Playing")
-            streamInfo?.state = "Playing"
-            
-            // Setup PiP if not done
-            if !isPiPEnabled {
-                setupPiPAfterDelay()
-            }
-            
-        case .paused:
-            print("VLC: Paused")
-            streamInfo?.state = "Paused"
-            
-        case .stopped:
-            print("VLC: Stopped")
-            streamInfo?.state = "Stopped"
-            
-        case .error:
-            print("VLC: Error occurred")
-            streamInfo?.state = "Error"
-            streamInfo?.lastError = "Stream playback error"
-            
-        case .ended:
-            print("VLC: Ended")
-            streamInfo?.state = "Ended"
-            
-        case .esAdded:
-            print("VLC: Elementary stream added")
-            streamInfo?.state = "ES Added"
-            
-        @unknown default:
-            print("VLC: Unknown state")
-        }
-    }
-    
-    // Fixed: Changed parameter from Notification! to Notification to match protocol
-    func mediaPlayerTimeChanged(_ aNotification: Notification) {
-        // Update time info
-        if let player = aNotification.object as? VLCMediaPlayer {
-            streamInfo?.time = TimeInterval(player.time.intValue / 1000)
-            streamInfo?.position = player.position
-        }
-    }
-}
-
-// MARK: - Stream Info Model
-struct StreamInfo {
-    var state: String = "Idle"
-    var resolution: CGSize = .zero
-    var videoCodec: String = "Unknown"
-    var audioTrack: String?
-    var position: Float = 0.0
-    var time: TimeInterval = 0
-    var isBuffering: Bool = false
-    var droppedFrames: Int = 0
-    var lastError: String?
-    var cpuUsage: Float = 0.0
-    var memoryUsage: Float = 0.0
-    var fps: Float = 0.0
-    
-    var qualityDescription: String {
-        if resolution.width >= 3840 {
-            return "4K UHD"
-        } else if resolution.width >= 1920 {
-            return "Full HD"
-        } else if resolution.width >= 1280 {
-            return "HD"
-        } else if resolution.width > 0 {
-            return "SD"
-        } else {
-            return "Unknown"
-        }
-    }
-    
-    var resolutionString: String {
-        if resolution.width > 0 && resolution.height > 0 {
-            return "\(Int(resolution.width))x\(Int(resolution.height))"
-        }
-        return "N/A"
-    }
-}
-
-// MARK: - Performance Monitor
-class PerformanceMonitor {
-    private var timer: Timer?
-    private var lastCPUInfo: host_cpu_load_info?
-    
-    struct Metrics {
-        var cpuUsage: Float = 0.0
-        var memoryUsage: Float = 0.0
-        var fps: Float = 0.0
-    }
-    
-    func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updateMetrics()
-        }
-    }
-    
-    func stopMonitoring() {
-        timer?.invalidate()
-        timer = nil
-    }
-    
-    func getCurrentMetrics() -> Metrics {
-        var metrics = Metrics()
+        pipController?.delegate = nil
+        pipController = nil
         
-        // CPU Usage
-        metrics.cpuUsage = getCPUUsage()
+        sampleBufferDisplayLayer?.flushAndRemoveImage()
+        sampleBufferDisplayLayer?.removeFromSuperlayer()
+        sampleBufferDisplayLayer = nil
         
-        // Memory Usage
-        metrics.memoryUsage = getMemoryUsage()
+        displayLayerView?.removeFromSuperview()
+        displayLayerView = nil
         
-        // FPS (would need actual frame counting)
-        metrics.fps = 30.0 // Placeholder
+        timebase = nil
+        lastPresentationTime = .zero
         
-        return metrics
-    }
-    
-    private func updateMetrics() {
-        // Update metrics periodically
-        _ = getCurrentMetrics()
-    }
-    
-    private func getCPUUsage() -> Float {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        cancellables.removeAll()
         
-        let result = withUnsafeMutablePointer(to: &info) { infoPtr in
-            infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
-            }
-        }
-        
-        if result == KERN_SUCCESS {
-            return Float(info.resident_size) / Float(1024 * 1024) // MB
-        }
-        
-        return 0.0
-    }
-    
-    private func getMemoryUsage() -> Float {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
-        
-        let result = withUnsafeMutablePointer(to: &info) { infoPtr in
-            infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
-            }
-        }
-        
-        if result == KERN_SUCCESS {
-            return Float(info.resident_size) / Float(1024 * 1024 * 1024) // GB
-        }
-        
-        return 0.0
+        print("Cleanup completed")
     }
     
     deinit {
-        stopMonitoring()
+        cleanup()
     }
 }
 
-// MARK: - SwiftUI Wrapper
-struct RTSPPlayerView: UIViewRepresentable {
-    @Binding var url: String
-    @Binding var isPlaying: Bool
-    var username: String?
-    var password: String?
-    var networkCaching: Int = 150
+// MARK: - VLC Frame Extractor
+class VLCFrameExtractor: NSObject {
+    weak var vlcPlayer: VLCMediaPlayer?
+    weak var delegate: VLCFrameExtractionDelegate?
     
-    // Callbacks
-    var onStreamInfo: ((StreamInfo) -> Void)?
-    var onPiPStatusChanged: ((Bool) -> Void)?
+    private var isExtracting = false
+    private var extractionTimer: Timer?
+    private let extractionQueue = DispatchQueue(label: "com.rtspplayer.extraction", qos: .userInteractive)
     
-    func makeUIView(context: Context) -> RTSPPlayerUIView {
-        let playerView = RTSPPlayerUIView()
-        
-        // Setup PiP delegate
-        PictureInPictureManager.shared.delegate = context.coordinator
-        
-        return playerView
+    // Frame buffer pool for performance
+    private var pixelBufferPool: CVPixelBufferPool?
+    private let poolAttributes: [String: Any] = [
+        kCVPixelBufferPoolMinimumBufferCountKey as String: 5
+    ]
+    
+    init(vlcPlayer: VLCMediaPlayer) {
+        self.vlcPlayer = vlcPlayer
+        super.init()
+        setupPixelBufferPool()
     }
     
-    func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
-        if isPlaying {
-            if !uiView.isPlaying() && !url.isEmpty {
-                uiView.play(url: url, username: username, password: password, networkCaching: networkCaching)
+    private func setupPixelBufferPool() {
+        let pixelBufferAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 1920,
+            kCVPixelBufferHeightKey as String: 1080,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        
+        var pool: CVPixelBufferPool?
+        CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelBufferAttributes as CFDictionary,
+            &pool
+        )
+        
+        pixelBufferPool = pool
+    }
+    
+    func startExtraction() {
+        guard !isExtracting, vlcPlayer != nil else { return }
+        isExtracting = true
+        
+        // Setup VLC video callback
+        setupVLCVideoCallback()
+        
+        print("Frame extraction started")
+    }
+    
+    func stopExtraction() {
+        isExtracting = false
+        extractionTimer?.invalidate()
+        extractionTimer = nil
+        
+        // Remove VLC video callback
+        removeVLCVideoCallback()
+        
+        print("Frame extraction stopped")
+    }
+    
+    private func setupVLCVideoCallback() {
+        // Method 1: Use VLC snapshot capability
+        startSnapshotBasedExtraction()
+        
+        // Method 2: Direct callback (if available in VLCKit version)
+        // setupDirectVideoCallback()
+    }
+    
+    private func startSnapshotBasedExtraction() {
+        extractionTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+            self?.extractCurrentFrame()
+        }
+    }
+    
+    private func extractCurrentFrame() {
+        guard let player = vlcPlayer,
+              player.isPlaying,
+              let drawable = player.drawable as? UIView else { return }
+        
+        extractionQueue.async { [weak self] in
+            // Capture current frame from VLC drawable
+            DispatchQueue.main.sync {
+                if let pixelBuffer = self?.captureViewToPixelBuffer(drawable) {
+                    self?.processPixelBuffer(pixelBuffer)
+                }
             }
+        }
+    }
+    
+    private func captureViewToPixelBuffer(_ view: UIView) -> CVPixelBuffer? {
+        var pixelBuffer: CVPixelBuffer?
+        
+        if let pool = pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
         } else {
-            if uiView.isPlaying() {
-                uiView.pause()
+            // Create pixel buffer without pool
+            let attrs: [String: Any] = [
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ]
+            
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                Int(view.bounds.width),
+                Int(view.bounds.height),
+                kCVPixelFormatType_32BGRA,
+                attrs as CFDictionary,
+                &pixelBuffer
+            )
+        }
+        
+        guard let buffer = pixelBuffer else { return nil }
+        
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        
+        let pixelData = CVPixelBufferGetBaseAddress(buffer)
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: pixelData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: rgbColorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+        
+        UIGraphicsPushContext(context)
+        view.layer.render(in: context)
+        UIGraphicsPopContext()
+        
+        return buffer
+    }
+    
+    private func processPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
+        // Create sample buffer from pixel buffer
+        guard let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
+        
+        // Send to delegate
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didExtractFrame(sampleBuffer)
+        }
+    }
+    
+    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        var formatDescription: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription
+        )
+        
+        guard let format = formatDescription else { return nil }
+        
+        let now = CACurrentMediaTime()
+        let presentationTime = CMTime(seconds: now, preferredTimescale: 1000000)
+        let duration = CMTime(value: 1, timescale: 30)
+        
+        var timingInfo = CMSampleTimingInfo(
+            duration: duration,
+            presentationTimeStamp: presentationTime,
+            decodeTimeStamp: .invalid
+        )
+        
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescription: format,
+            sampleTiming: &timingInfo,
+            sampleBufferOut: &sampleBuffer
+        )
+        
+        // Mark for immediate display
+        if let buffer = sampleBuffer {
+            if let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true) {
+                if CFArrayGetCount(attachments) > 0 {
+                    let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+                    CFDictionarySetValue(
+                        dict,
+                        Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                        Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+                    )
+                }
             }
         }
         
-        // Update network caching if changed
-        uiView.updateNetworkCaching(networkCaching)
-        
-        // Get stream info
-        if let info = uiView.getStreamInfo() {
-            onStreamInfo?(info)
-        }
-        
-        // Report PiP status
-        onPiPStatusChanged?(uiView.isPiPActive)
+        return sampleBuffer
     }
     
-    static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: Coordinator) {
-        uiView.stop()
+    private func removeVLCVideoCallback() {
+        // Clean up any VLC callbacks
     }
     
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
+    deinit {
+        stopExtraction()
+        pixelBufferPool = nil
+    }
+}
+
+// MARK: - Frame Extraction Delegate
+protocol VLCFrameExtractionDelegate: AnyObject {
+    func didExtractFrame(_ sampleBuffer: CMSampleBuffer)
+}
+
+// MARK: - Frame Processing
+extension PictureInPictureManager: VLCFrameExtractionDelegate {
+    func didExtractFrame(_ sampleBuffer: CMSampleBuffer) {
+        renderQueue.async { [weak self] in
+            self?.renderSampleBuffer(sampleBuffer)
+        }
     }
     
-    // MARK: - Coordinator
-    class Coordinator: NSObject, PictureInPictureManagerDelegate {
-        let parent: RTSPPlayerView
+    private func renderSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard let displayLayer = sampleBufferDisplayLayer else { return }
         
-        init(_ parent: RTSPPlayerView) {
-            self.parent = parent
+        // Check if layer is ready
+        guard displayLayer.status != .failed else {
+            print("Display layer failed")
+            return
         }
         
-        func pipDidStart() {
-            parent.onPiPStatusChanged?(true)
-        }
-        
-        func pipDidStop() {
-            parent.onPiPStatusChanged?(false)
-        }
-        
-        func pipWillStart() {
-            // Handle PiP will start
-        }
-        
-        func pipWillStop() {
-            // Handle PiP will stop
-        }
-        
-        func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
-            // Restore UI when returning from PiP
-            completionHandler(true)
+        // Enqueue sample buffer
+        if displayLayer.isReadyForMoreMediaData {
+            displayLayer.enqueue(sampleBuffer)
+            
+            // Update presentation time
+            lastPresentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        } else {
+            // Layer is not ready, we might need to flush
+            if displayLayer.status == .failed {
+                displayLayer.flush()
+            }
         }
     }
 }
 
-// MARK: - Helper Extensions
-extension RTSPPlayerView {
+// MARK: - AVPictureInPictureControllerDelegate
+extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
-    /// Configure with stream info callback
-    func onStreamInfoUpdate(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onStreamInfo = callback
-        return view
+    func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        print("PiP will start")
+        
+        // Start frame extraction if not already started
+        frameExtractor?.startExtraction()
+        
+        delegate?.pipWillStart()
     }
     
-    /// Configure with PiP status callback
-    func onPiPStatusUpdate(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onPiPStatusChanged = callback
-        return view
+    func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        print("PiP did start")
+        isPiPActive = true
+        delegate?.pipDidStart()
+    }
+    
+    func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        print("PiP will stop")
+        delegate?.pipWillStop()
+    }
+    
+    func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        print("PiP did stop")
+        isPiPActive = false
+        
+        // Stop frame extraction
+        frameExtractor?.stopExtraction()
+        
+        delegate?.pipDidStop()
+    }
+    
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                   failedToStartPictureInPictureWithError error: Error) {
+        print("Failed to start PiP: \(error.localizedDescription)")
+    }
+    
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                   restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        print("Restore UI for PiP")
+        delegate?.pipRestoreUserInterface(completionHandler: completionHandler)
+    }
+}
+
+// MARK: - iOS 15+ Sample Buffer Playback Delegate
+@available(iOS 15.0, *)
+extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegate {
+    
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                   setPlaying playing: Bool) {
+        if playing {
+            vlcPlayer?.play()
+            frameExtractor?.startExtraction()
+        } else {
+            vlcPlayer?.pause()
+            frameExtractor?.stopExtraction()
+        }
+    }
+    
+    func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
+        // For live streams, return infinite range
+        return CMTimeRange(start: .zero, duration: .positiveInfinity)
+    }
+    
+    func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
+        return !(vlcPlayer?.isPlaying ?? false)
+    }
+    
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                   didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
+        print("PiP render size changed: \(newRenderSize.width)x\(newRenderSize.height)")
+        
+        // Optionally recreate pixel buffer pool with new size
+        // This can help optimize memory usage
+    }
+    
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                   skipByInterval skipInterval: CMTime,
+                                   completion completionHandler: @escaping () -> Void) {
+        // Live streams typically don't support skip
+        print("Skip not supported for live stream")
+        completionHandler()
+    }
+}
+
+// MARK: - Integration Helper
+extension PictureInPictureManager {
+    
+    /// Convenience method for VLC integration
+    func connectToVLCPlayer(_ player: VLCMediaPlayer, containerView: UIView) {
+        setupPiPForVLCStream(vlcPlayer: player, in: containerView)
+        
+        // Wait for player to start before enabling PiP
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            if player.isPlaying {
+                self?.frameExtractor?.startExtraction()
+            }
+        }
+    }
+    
+    /// Check if PiP can be started
+    var canStartPiP: Bool {
+        return isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
+    }
+    
+    /// Get current PiP status
+    var pipStatus: String {
+        if !isPiPSupported {
+            return "Not Supported"
+        } else if isPiPActive {
+            return "Active"
+        } else if isPiPPossible {
+            return "Ready"
+        } else if vlcPlayer?.isPlaying ?? false {
+            return "Preparing"
+        } else {
+            return "Inactive"
+        }
     }
 }
