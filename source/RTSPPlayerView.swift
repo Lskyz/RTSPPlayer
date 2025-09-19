@@ -24,6 +24,10 @@ class RTSPPlayerUIView: UIView {
     private var streamPassword: String?
     private var streamCaching: Int = 150
     
+    // Callbacks
+    var onStreamInfo: ((StreamInfo) -> Void)?
+    var onPiPStatusChanged: ((Bool) -> Void)?
+    
     // UI State - PiP로 인한 숨김 상태 관리
     private var isHiddenForPiP = false {
         didSet {
@@ -333,6 +337,10 @@ class RTSPPlayerUIView: UIView {
         info.isPiPPossible = isPiPPossible
         info.pipStatus = pipManager.pipStatus
         
+        // 콜백 호출
+        onStreamInfo?(info)
+        onPiPStatusChanged?(isPiPActive)
+        
         return info
     }
     
@@ -384,6 +392,9 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.videoContainerView?.setNeedsLayout()
                 self?.setNeedsLayout()
+                
+                // 스트림 정보 업데이트
+                _ = self?.getStreamInfo()
             }
             
         case .paused:
@@ -408,6 +419,9 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     
     func mediaPlayerTimeChanged(_ aNotification: Notification) {
         // Time updates can be handled here if needed
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.getStreamInfo()
+        }
     }
 }
 
@@ -420,6 +434,7 @@ extension RTSPPlayerUIView: PictureInPictureManagerDelegate {
     
     func pipDidStart() {
         print("Main player: PiP did start")
+        onPiPStatusChanged?(true)
     }
     
     func pipWillStop() {
@@ -428,6 +443,7 @@ extension RTSPPlayerUIView: PictureInPictureManagerDelegate {
     
     func pipDidStop() {
         print("Main player: PiP did stop")
+        onPiPStatusChanged?(false)
     }
     
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
@@ -505,15 +521,25 @@ struct RTSPPlayerView: UIViewRepresentable {
     var password: String?
     var networkCaching: Int = 150
     
-    var onStreamInfo: ((StreamInfo) -> Void)?
-    var onPiPStatusChanged: ((Bool) -> Void)?
+    // 콜백 클로저들
+    var onStreamInfoCallback: ((StreamInfo) -> Void)?
+    var onPiPStatusCallback: ((Bool) -> Void)?
     
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
+        
+        // 콜백 설정
+        playerView.onStreamInfo = onStreamInfoCallback
+        playerView.onPiPStatusChanged = onPiPStatusCallback
+        
         return playerView
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
+        // 콜백 업데이트
+        uiView.onStreamInfo = onStreamInfoCallback
+        uiView.onPiPStatusChanged = onPiPStatusCallback
+        
         if isPlaying {
             if !uiView.isPlaying() && !url.isEmpty {
                 uiView.play(url: url, username: username, password: password, networkCaching: networkCaching)
@@ -523,14 +549,6 @@ struct RTSPPlayerView: UIViewRepresentable {
                 uiView.pause()
             }
         }
-        
-        // Stream info callback
-        if let info = uiView.getStreamInfo() {
-            onStreamInfo?(info)
-        }
-        
-        // PiP status callback
-        onPiPStatusChanged?(uiView.isPiPActive)
     }
     
     static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: Coordinator) {
@@ -550,18 +568,18 @@ struct RTSPPlayerView: UIViewRepresentable {
     }
 }
 
-// MARK: - Helper Extensions
+// MARK: - Helper Extensions (수정됨)
 extension RTSPPlayerView {
     
     func onStreamInfoUpdate(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
         var view = self
-        view.onStreamInfo = callback
+        view.onStreamInfoCallback = callback
         return view
     }
     
     func onPiPStatusUpdate(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
         var view = self
-        view.onPiPStatusChanged = callback
+        view.onPiPStatusCallback = callback
         return view
     }
 }
