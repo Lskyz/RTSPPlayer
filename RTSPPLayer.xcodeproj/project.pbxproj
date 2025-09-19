@@ -3,18 +3,18 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		334016152E782F8B00233EAA /* app.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016142E782F8B00233EAA /* app.swift */; };
 		334016162E782F8B00233EAA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016172E782F8B00233EAA /* ContentView.swift */; };
 		334016182E782F8B00233EAA /* RTSPViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016192E782F8B00233EAA /* RTSPViewModel.swift */; };
+		3340161C2E78307600233EAA /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 3340161B2E78307600233EAA /* VLCKitSPM */; };
 		334016202E782F8B00233EAA /* RTSPPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016212E782F8B00233EAA /* RTSPPlayerView.swift */; };
 		334016222E782F8B00233EAA /* PictureInPictureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016232E782F8B00233EAA /* PictureInPictureManager.swift */; };
 		334016242E782F8B00233EAA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 334016252E782F8B00233EAA /* Assets.xcassets */; };
 		334016262E782F8B00233EAA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 334016272E782F8B00233EAA /* Preview Assets.xcassets */; };
-		3340161C2E78307600233EAA /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 3340161B2E78307600233EAA /* VLCKitSPM */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,7 +77,7 @@
 		334015DC2E782E5100233EAA = {
 			isa = PBXGroup;
 			children = (
-				334015E72E782E5100233EAA /* RTSPPlayer */,
+				334015E72E782E5100233EAA /* source */,
 				334015E62E782E5100233EAA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -92,7 +92,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		334015E72E782E5100233EAA /* RTSPPlayer */ = {
+		334015E72E782E5100233EAA /* source */ = {
 			isa = PBXGroup;
 			children = (
 				334016142E782F8B00233EAA /* app.swift */,
@@ -197,8 +197,8 @@
 					};
 				};
 			};
-			buildConfigurationList = 334015E02E782E5100233EAA /* Build configuration list for PBXProject "RTSPPlayer" */;
-			compatibilityVersion = "Xcode 14.0";
+			buildConfigurationList = 334015E02E782E5100233EAA /* Build configuration list for PBXProject "RTSPPLayer" */;
+			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -541,7 +541,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		334015E02E782E5100233EAA /* Build configuration list for PBXProject "RTSPPlayer" */ = {
+		334015E02E782E5100233EAA /* Build configuration list for PBXProject "RTSPPLayer" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				334016072E782E5500233EAA /* Debug */,
