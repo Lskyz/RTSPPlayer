@@ -13,13 +13,16 @@ struct ContentView: View {
     @State private var showStreamInfo = false
     @State private var currentStreamInfo: [String: Any] = [:]
     
+    // Player size management
+    @State private var playerSize: CGSize = .zero
+    
     var body: some View {
         NavigationView {
             ZStack {
                 // 메인 리스트 뷰
                 streamListView
                 
-                // 플레이어 오버레이
+                // 플레이어 오버레이 with proper sizing
                 if showPlayer, viewModel.selectedStream != nil {
                     playerOverlay
                 }
@@ -96,6 +99,17 @@ struct ContentView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                        
+                        // Debug info
+                        if viewModel.selectedStream != nil {
+                            HStack {
+                                Text("PiP 상태:")
+                                Spacer()
+                                Text(pipManager.pipStatus)
+                                    .font(.caption2)
+                                    .foregroundColor(.blue)
+                            }
+                        }
                     }
                 }
             }
@@ -103,37 +117,52 @@ struct ContentView: View {
         .listStyle(InsetGroupedListStyle())
     }
     
-    // MARK: - Player Overlay
+    // MARK: - Player Overlay with Fixed Sizing
     private var playerOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.9)
-                .edgesIgnoringSafeArea(.all)
-            
-            VStack(spacing: 0) {
-                // 헤더
-                playerHeader
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.9)
+                    .edgesIgnoringSafeArea(.all)
                 
-                // 플레이어 뷰
-                RTSPPlayerView(
-                    url: $viewModel.currentStreamURL,
-                    isPlaying: $viewModel.isPlaying,
-                    username: viewModel.selectedStream?.username,
-                    password: viewModel.selectedStream?.password,
-                    networkCaching: viewModel.networkCaching
-                )
-                .aspectRatio(16/9, contentMode: .fit)
-                .background(Color.black)
-                .onTapGesture(count: 2) {
-                    // 더블 탭으로 PiP 토글
-                    pipManager.togglePiP()
+                VStack(spacing: 0) {
+                    // 헤더
+                    playerHeader
+                    
+                    // 플레이어 뷰 with proper constraints
+                    RTSPPlayerView(
+                        url: $viewModel.currentStreamURL,
+                        isPlaying: $viewModel.isPlaying,
+                        username: viewModel.selectedStream?.username,
+                        password: viewModel.selectedStream?.password,
+                        networkCaching: viewModel.networkCaching
+                    )
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.width * 9 / 16 // 16:9 aspect ratio
+                    )
+                    .background(Color.black)
+                    .clipped()
+                    .onTapGesture(count: 2) {
+                        // 더블 탭으로 PiP 토글
+                        pipManager.togglePiP()
+                    }
+                    .onAppear {
+                        playerSize = CGSize(
+                            width: geometry.size.width,
+                            height: geometry.size.width * 9 / 16
+                        )
+                        print("Player size set to: \(playerSize)")
+                    }
+                    
+                    Spacer()
+                    
+                    // 컨트롤러
+                    playerControls
                 }
-                
-                // 컨트롤러
-                playerControls
             }
+            .transition(.move(edge: .bottom))
+            .animation(.spring(), value: showPlayer)
         }
-        .transition(.move(edge: .bottom))
-        .animation(.spring(), value: showPlayer)
     }
     
     // MARK: - Player Header
@@ -161,6 +190,13 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundColor(.gray)
                 }
+                
+                // 플레이어 크기 정보
+                if playerSize != .zero {
+                    Text("화면: \(Int(playerSize.width))×\(Int(playerSize.height))")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
             }
             
             Spacer()
@@ -178,13 +214,14 @@ struct ContentView: View {
                 // Enhanced PiP 버튼
                 if pipManager.isPiPSupported {
                     Button(action: {
+                        print("PiP button tapped - Can start: \(pipManager.canStartPiP)")
                         pipManager.togglePiP()
                     }) {
                         Image(systemName: getPiPButtonIcon())
                             .font(.title2)
-                            .foregroundColor(pipManager.isPiPPossible ? .white : .gray)
+                            .foregroundColor(pipManager.canStartPiP ? .white : .gray)
                     }
-                    .disabled(!pipManager.isPiPPossible)
+                    .disabled(!pipManager.canStartPiP && !pipManager.isPiPActive)
                 }
             }
         }
@@ -197,7 +234,10 @@ struct ContentView: View {
         VStack(spacing: 20) {
             // 재생 컨트롤
             HStack(spacing: 40) {
-                Button(action: viewModel.reconnectStream) {
+                Button(action: {
+                    print("Reconnecting stream...")
+                    viewModel.reconnectStream()
+                }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.title2)
                         .foregroundColor(.white)
@@ -223,6 +263,9 @@ struct ContentView: View {
                 
                 Slider(value: $viewModel.volume, in: 0...1)
                     .accentColor(.white)
+                    .onChange(of: viewModel.volume) { newValue in
+                        print("Volume changed to: \(newValue)")
+                    }
                 
                 Image(systemName: "speaker.wave.3.fill")
                     .foregroundColor(.white)
@@ -255,33 +298,45 @@ struct ContentView: View {
                 }
                 .pickerStyle(SegmentedPickerStyle())
                 .onChange(of: viewModel.selectedLatencyPreset) { newValue in
+                    print("Latency preset changed to: \(newValue)")
                     viewModel.applyLatencySettings(newValue)
                 }
             }
             .padding(.horizontal)
             
-            // PiP 상태 표시
+            // PiP 상태와 디버그 정보 표시
             if pipManager.isPiPSupported {
-                HStack {
-                    Image(systemName: "pip")
-                        .foregroundColor(.blue)
-                    
-                    Text("Enhanced PiP: \(pipStatusText)")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                    
-                    Spacer()
-                    
-                    if pipManager.isPiPPossible {
-                        Button("토글") {
-                            pipManager.togglePiP()
+                VStack(spacing: 8) {
+                    HStack {
+                        Image(systemName: "pip")
+                            .foregroundColor(.blue)
+                        
+                        Text("Enhanced PiP: \(pipStatusText)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Spacer()
+                        
+                        if pipManager.canStartPiP || pipManager.isPiPActive {
+                            Button(pipManager.isPiPActive ? "종료" : "시작") {
+                                print("Manual PiP toggle - Current state: \(pipManager.isPiPActive)")
+                                pipManager.togglePiP()
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.2))
+                            .cornerRadius(4)
+                            .foregroundColor(.blue)
                         }
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue.opacity(0.2))
-                        .cornerRadius(4)
-                        .foregroundColor(.blue)
+                    }
+                    
+                    // Debug info for troubleshooting
+                    HStack {
+                        Text("디버그: \(pipManager.pipStatus)")
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+                        Spacer()
                     }
                 }
                 .padding(.horizontal)
@@ -308,6 +363,18 @@ struct ContentView: View {
                     SecureField("비밀번호", text: $newStreamPassword)
                 }
                 
+                Section(header: Text("테스트 URL")) {
+                    Button("테스트 스트림 1 사용") {
+                        newStreamName = "테스트 스트림"
+                        newStreamURL = "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4"
+                    }
+                    
+                    Button("테스트 스트림 2 사용") {
+                        newStreamName = "샘플 스트림"
+                        newStreamURL = "rtsp://demo.streamlock.net/vod/sample.mp4"
+                    }
+                }
+                
                 Section(header: Text("Enhanced PiP 설정")) {
                     HStack {
                         Text("PiP 지원")
@@ -317,7 +384,7 @@ struct ContentView: View {
                     }
                     
                     if pipManager.isPiPSupported {
-                        Text("H.264/H.265 스트림에서 Enhanced PiP를 지원합니다.")
+                        Text("H.264/H.265 스트림에서 Enhanced PiP를 지원합니다. 스트림 재생 후 PiP 버튼을 눌러주세요.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -376,6 +443,14 @@ struct ContentView: View {
                                 .foregroundColor(pipManager.isPiPActive ? .green : .gray)
                         }
                         
+                        HStack {
+                            Text("상세 상태")
+                            Spacer()
+                            Text(pipManager.pipStatus)
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Enhanced Features")
                                 .font(.subheadline)
@@ -390,6 +465,10 @@ struct ContentView: View {
                                 .foregroundColor(.secondary)
                             
                             Text("• 실시간 프레임 추출")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Text("• 30 FPS 스냅샷 기반 렌더링")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -419,11 +498,27 @@ struct ContentView: View {
                     }
                 }
                 
+                Section(header: Text("디스플레이 설정")) {
+                    HStack {
+                        Text("플레이어 크기")
+                        Spacer()
+                        Text(playerSize != .zero ? "\(Int(playerSize.width))×\(Int(playerSize.height))" : "미설정")
+                            .foregroundColor(.gray)
+                    }
+                    
+                    HStack {
+                        Text("화면 비율")
+                        Spacer()
+                        Text("16:9 고정")
+                            .foregroundColor(.gray)
+                    }
+                }
+                
                 Section(header: Text("정보")) {
                     HStack {
                         Text("버전")
                         Spacer()
-                        Text("1.1.0")
+                        Text("1.2.0")
                             .foregroundColor(.gray)
                     }
                     
@@ -505,6 +600,22 @@ struct ContentView: View {
                                 Text("필요")
                                     .foregroundColor(.orange)
                             }
+                        }
+                    }
+                    
+                    Section(header: Text("디스플레이 정보")) {
+                        HStack {
+                            Text("플레이어 크기")
+                            Spacer()
+                            Text(playerSize != .zero ? "\(Int(playerSize.width))×\(Int(playerSize.height))" : "미설정")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Text("PiP 상태")
+                            Spacer()
+                            Text(pipManager.pipStatus)
+                                .foregroundColor(.blue)
                         }
                     }
                 }
