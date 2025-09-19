@@ -18,17 +18,29 @@ struct RTSPPlayerApp: App {
     }
     
     private func handleScenePhaseChange(_ phase: ScenePhase) {
+        let pipManager = PictureInPictureManager.shared
+        
         switch phase {
         case .background:
             print("App moved to background")
-            // PiP가 활성화되어 있지 않으면 스트림 일시정지 고려
+            // PiP가 활성화되어 있으면 스트림을 유지
+            if !pipManager.isPiPActive {
+                print("PiP not active, considering stream pause")
+                // PiP가 비활성화된 경우에만 스트림 일시정지 고려
+            } else {
+                print("PiP is active, keeping stream alive")
+            }
             
         case .inactive:
             print("App is inactive")
+            // PiP 전환 중일 수 있으므로 아무것도 하지 않음
             
         case .active:
             print("App is active")
-            // 필요시 스트림 재개
+            // 포그라운드로 복귀 시 필요한 처리
+            if pipManager.isPiPActive {
+                print("Returning from background with active PiP")
+            }
             
         @unknown default:
             break
@@ -56,6 +68,29 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         // 모든 방향 지원
         return .all
+    }
+    
+    // MARK: - Background/Foreground Handling
+    
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        let pipManager = PictureInPictureManager.shared
+        
+        if pipManager.isPiPActive {
+            print("App entering background with active PiP - maintaining playback")
+            // PiP가 활성화된 경우 백그라운드에서도 재생 유지
+        } else {
+            print("App entering background without PiP")
+        }
+    }
+    
+    func applicationWillEnterForeground(_ application: UIApplication) {
+        let pipManager = PictureInPictureManager.shared
+        
+        if pipManager.isPiPActive {
+            print("App entering foreground with active PiP")
+        } else {
+            print("App entering foreground without PiP")
+        }
     }
     
     // MARK: - Private Methods
@@ -100,23 +135,38 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     
     func sceneDidDisconnect(_ scene: UIScene) {
         // 씬 연결 해제 시 정리 작업
+        let pipManager = PictureInPictureManager.shared
+        
+        if !pipManager.isPiPActive {
+            // PiP가 비활성화된 경우에만 정리
+            print("Scene disconnected without PiP - cleaning up")
+        }
     }
     
     func sceneDidBecomeActive(_ scene: UIScene) {
         // 씬이 활성화될 때
+        print("Scene became active")
     }
     
     func sceneWillResignActive(_ scene: UIScene) {
         // 씬이 비활성화될 때
+        print("Scene will resign active")
     }
     
     func sceneWillEnterForeground(_ scene: UIScene) {
         // 포그라운드 진입 시
+        print("Scene will enter foreground")
     }
     
     func sceneDidEnterBackground(_ scene: UIScene) {
         // 백그라운드 진입 시
-        // PiP가 활성화되어 있지 않으면 리소스 절약을 위해 일시정지 고려
+        let pipManager = PictureInPictureManager.shared
+        
+        if pipManager.isPiPActive {
+            print("Scene entered background with active PiP - maintaining resources")
+        } else {
+            print("Scene entered background without PiP")
+        }
     }
 }
 
