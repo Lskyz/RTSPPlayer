@@ -3,12 +3,16 @@ import SwiftUI
 import VLCKitSPM
 import AVKit
 
-// MARK: - RTSP Player UIView with Sample Buffer PiP
+// MARK: - RTSP Player UIView with Fixed Rendering and PiP
 class RTSPPlayerUIView: UIView {
     
     // VLC Components
     private var mediaPlayer: VLCMediaPlayer?
     private var media: VLCMedia?
+    
+    // Video Layer for proper rendering
+    private var videoLayer: CALayer?
+    private var videoContainerView: UIView?
     
     // PiP Components
     private let pipManager = PictureInPictureManager.shared
@@ -21,6 +25,9 @@ class RTSPPlayerUIView: UIView {
     // Performance Monitoring
     private var performanceMonitor: PerformanceMonitor?
     
+    // Layout constraints
+    private var containerViewConstraints: [NSLayoutConstraint] = []
+    
     // Low Latency Options
     private let lowLatencyOptions: [String: String] = [
         "network-caching": "150",
@@ -29,14 +36,14 @@ class RTSPPlayerUIView: UIView {
         "realrtsp-caching": "150",
         "clock-jitter": "150",
         "rtsp-tcp": "",
-        "avcodec-hw": "videotoolbox", // Use VideoToolbox for hardware decoding
+        "avcodec-hw": "videotoolbox",
         "clock-synchro": "0",
         "avcodec-skiploopfilter": "0",
         "avcodec-skip-frame": "0",
         "avcodec-skip-idct": "0",
-        "avcodec-threads": "4", // Multi-threading for better performance
-        "sout-mux-caching": "10", // Output mux caching
-        "live-caching": "150" // Live stream caching
+        "avcodec-threads": "4",
+        "sout-mux-caching": "10",
+        "live-caching": "150"
     ]
     
     override init(frame: CGRect) {
@@ -56,18 +63,82 @@ class RTSPPlayerUIView: UIView {
     private func setupPlayer() {
         backgroundColor = .black
         
+        // Create video container view
+        setupVideoContainer()
+        
         // Initialize VLC Media Player
         mediaPlayer = VLCMediaPlayer()
-        mediaPlayer?.drawable = self
+        
+        // Set drawable to the container view instead of self
+        mediaPlayer?.drawable = videoContainerView
         mediaPlayer?.audio?.volume = 100
         mediaPlayer?.delegate = self
         
-        print("VLC Player initialized")
+        // Configure VLC for proper rendering
+        configureVLCPlayer()
+        
+        print("VLC Player initialized with proper drawable")
+    }
+    
+    private func setupVideoContainer() {
+        // Create container view for video
+        videoContainerView = UIView()
+        videoContainerView?.backgroundColor = .black
+        videoContainerView?.translatesAutoresizingMaskIntoConstraints = false
+        
+        guard let containerView = videoContainerView else { return }
+        
+        addSubview(containerView)
+        
+        // Set up constraints to fill the entire view
+        containerViewConstraints = [
+            containerView.topAnchor.constraint(equalTo: topAnchor),
+            containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            containerView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ]
+        
+        NSLayoutConstraint.activate(containerViewConstraints)
+        
+        print("Video container setup completed")
+    }
+    
+    private func configureVLCPlayer() {
+        guard let player = mediaPlayer else { return }
+        
+        // Force VLC to use the container view's bounds
+        player.videoAspectRatio = nil // Let VLC auto-detect
+        player.videoScale = 0 // Fit to view
+        
+        // Enable hardware decoding
+        if let videoView = videoContainerView {
+            videoView.contentMode = .scaleAspectFit
+        }
+        
+        print("VLC Player configured for proper video rendering")
     }
     
     private func setupPerformanceMonitoring() {
         performanceMonitor = PerformanceMonitor()
         performanceMonitor?.startMonitoring()
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        
+        // Update video container bounds
+        videoContainerView?.frame = bounds
+        
+        // Force VLC to redraw if playing
+        if let player = mediaPlayer, player.isPlaying {
+            // Trigger a redraw by temporarily changing the video scale
+            let currentScale = player.videoScale
+            player.videoScale = currentScale == 0 ? 1 : 0
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                player.videoScale = 0 // Reset to fit
+            }
+        }
     }
     
     // MARK: - Playback Control
@@ -96,19 +167,24 @@ class RTSPPlayerUIView: UIView {
         
         // Set media and play
         mediaPlayer?.media = media
-        mediaPlayer?.play()
         
-        print("Starting stream: \(url)")
-        
-        // Setup PiP after a delay
-        setupPiPAfterDelay()
+        // Ensure proper drawable setup before playing
+        DispatchQueue.main.async { [weak self] in
+            self?.mediaPlayer?.drawable = self?.videoContainerView
+            self?.mediaPlayer?.play()
+            
+            print("Starting stream: \(url)")
+            
+            // Setup PiP after a delay
+            self?.setupPiPAfterDelay()
+        }
     }
     
     private func buildAuthenticatedURL(url: String, username: String?, password: String?) -> String {
         guard let username = username, let password = password else { return url }
         
         if let urlComponents = URLComponents(string: url) {
-            let components = urlComponents  // Changed from var to let
+            let components = urlComponents
             var urlString = "\(components.scheme ?? "rtsp")://"
             urlString += "\(username):\(password)@"
             urlString += "\(components.host ?? "")"
@@ -148,23 +224,26 @@ class RTSPPlayerUIView: UIView {
         media.addOption("--no-network-synchronisation")
         media.addOption("--no-drop-late-frames")
         media.addOption("--no-skip-frames")
+        media.addOption("--video-filter=")
+        media.addOption("--deinterlace=0")
         
         print("Applied optimizations with caching: \(caching)ms")
     }
     
     private func setupPiPAfterDelay() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             self?.setupPiP()
         }
     }
     
     private func setupPiP() {
         guard let mediaPlayer = mediaPlayer,
+              let containerView = videoContainerView,
               mediaPlayer.isPlaying,
               !isPiPEnabled else { return }
         
-        // Connect PiP manager to this view
-        pipManager.connectToVLCPlayer(mediaPlayer, containerView: self)
+        // Connect PiP manager to the video container view
+        pipManager.connectToVLCPlayer(mediaPlayer, containerView: containerView)
         isPiPEnabled = true
         
         print("PiP setup completed")
@@ -176,6 +255,9 @@ class RTSPPlayerUIView: UIView {
         currentStreamURL = nil
         isPiPEnabled = false
         streamInfo = nil
+        
+        // Clean up video container
+        videoContainerView?.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
         
         print("Stream stopped")
     }
@@ -222,7 +304,7 @@ class RTSPPlayerUIView: UIView {
         info.resolution = CGSize(width: CGFloat(videoSize.width), height: CGFloat(videoSize.height))
         info.videoCodec = detectVideoCodec()
         
-        // Audio info - Fixed: audioTrackNames is not optional
+        // Audio info
         if let audioTracks = mediaPlayer.audioTrackNames as? [String],
            let audioTrack = audioTracks.first {
             info.audioTrack = audioTrack
@@ -248,9 +330,7 @@ class RTSPPlayerUIView: UIView {
     }
     
     private func detectVideoCodec() -> String {
-        // Try to detect codec from media info
         if let media = media {
-            // Parse codec info from VLC media (simplified)
             let url = media.url?.absoluteString ?? ""
             if url.contains("h264") || url.contains("avc") {
                 return "H.264/AVC"
@@ -263,8 +343,6 @@ class RTSPPlayerUIView: UIView {
     }
     
     private func getDroppedFrames() -> Int {
-        // VLC doesn't directly expose dropped frames count
-        // This would need custom implementation or VLC library modification
         return 0
     }
     
@@ -301,6 +379,14 @@ class RTSPPlayerUIView: UIView {
     deinit {
         stop()
         performanceMonitor?.stopMonitoring()
+        
+        // Clean up constraints
+        NSLayoutConstraint.deactivate(containerViewConstraints)
+        containerViewConstraints.removeAll()
+        
+        videoContainerView?.removeFromSuperview()
+        videoContainerView = nil
+        
         mediaPlayer = nil
         print("RTSPPlayerUIView deinitialized")
     }
@@ -309,11 +395,9 @@ class RTSPPlayerUIView: UIView {
 // MARK: - VLCMediaPlayerDelegate
 extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     
-    // Fixed: Changed parameter from Notification! to Notification to match protocol
     func mediaPlayerStateChanged(_ aNotification: Notification) {
         guard let player = aNotification.object as? VLCMediaPlayer else { return }
         
-        // Fixed: Made switch exhaustive by adding .esAdded case
         switch player.state {
         case .opening:
             print("VLC: Opening stream...")
@@ -325,12 +409,18 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
             streamInfo?.state = "Buffering"
             
         case .playing:
-            print("VLC: Playing")
+            print("VLC: Playing - Video size: \(player.videoSize)")
             streamInfo?.state = "Playing"
             
-            // Setup PiP if not done
-            if !isPiPEnabled {
-                setupPiPAfterDelay()
+            // Ensure proper video rendering
+            DispatchQueue.main.async { [weak self] in
+                self?.videoContainerView?.setNeedsLayout()
+                self?.setNeedsLayout()
+                
+                // Setup PiP if not done
+                if self?.isPiPEnabled == false {
+                    self?.setupPiPAfterDelay()
+                }
             }
             
         case .paused:
@@ -359,9 +449,7 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
         }
     }
     
-    // Fixed: Changed parameter from Notification! to Notification to match protocol
     func mediaPlayerTimeChanged(_ aNotification: Notification) {
-        // Update time info
         if let player = aNotification.object as? VLCMediaPlayer {
             streamInfo?.time = TimeInterval(player.time.intValue / 1000)
             streamInfo?.position = player.position
@@ -431,20 +519,14 @@ class PerformanceMonitor {
     func getCurrentMetrics() -> Metrics {
         var metrics = Metrics()
         
-        // CPU Usage
         metrics.cpuUsage = getCPUUsage()
-        
-        // Memory Usage
         metrics.memoryUsage = getMemoryUsage()
-        
-        // FPS (would need actual frame counting)
         metrics.fps = 30.0 // Placeholder
         
         return metrics
     }
     
     private func updateMetrics() {
-        // Update metrics periodically
         _ = getCurrentMetrics()
     }
     
@@ -459,7 +541,7 @@ class PerformanceMonitor {
         }
         
         if result == KERN_SUCCESS {
-            return Float(info.resident_size) / Float(1024 * 1024) // MB
+            return Float(info.resident_size) / Float(1024 * 1024)
         }
         
         return 0.0
@@ -476,7 +558,7 @@ class PerformanceMonitor {
         }
         
         if result == KERN_SUCCESS {
-            return Float(info.resident_size) / Float(1024 * 1024 * 1024) // GB
+            return Float(info.resident_size) / Float(1024 * 1024 * 1024)
         }
         
         return 0.0
@@ -495,14 +577,12 @@ struct RTSPPlayerView: UIViewRepresentable {
     var password: String?
     var networkCaching: Int = 150
     
-    // Callbacks
     var onStreamInfo: ((StreamInfo) -> Void)?
     var onPiPStatusChanged: ((Bool) -> Void)?
     
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
         
-        // Setup PiP delegate
         PictureInPictureManager.shared.delegate = context.coordinator
         
         return playerView
@@ -519,15 +599,12 @@ struct RTSPPlayerView: UIViewRepresentable {
             }
         }
         
-        // Update network caching if changed
         uiView.updateNetworkCaching(networkCaching)
         
-        // Get stream info
         if let info = uiView.getStreamInfo() {
             onStreamInfo?(info)
         }
         
-        // Report PiP status
         onPiPStatusChanged?(uiView.isPiPActive)
     }
     
@@ -539,7 +616,6 @@ struct RTSPPlayerView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    // MARK: - Coordinator
     class Coordinator: NSObject, PictureInPictureManagerDelegate {
         let parent: RTSPPlayerView
         
@@ -556,15 +632,12 @@ struct RTSPPlayerView: UIViewRepresentable {
         }
         
         func pipWillStart() {
-            // Handle PiP will start
         }
         
         func pipWillStop() {
-            // Handle PiP will stop
         }
         
         func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
-            // Restore UI when returning from PiP
             completionHandler(true)
         }
     }
@@ -573,14 +646,12 @@ struct RTSPPlayerView: UIViewRepresentable {
 // MARK: - Helper Extensions
 extension RTSPPlayerView {
     
-    /// Configure with stream info callback
     func onStreamInfoUpdate(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
         var view = self
         view.onStreamInfo = callback
         return view
     }
     
-    /// Configure with PiP status callback
     func onPiPStatusUpdate(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
         var view = self
         view.onPiPStatusChanged = callback
