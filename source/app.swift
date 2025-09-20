@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import VLCKitSPM
+import UIKit
 
 @main
 struct RTSPPlayerApp: App {
@@ -20,15 +21,15 @@ struct RTSPPlayerApp: App {
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         switch phase {
         case .background:
-            print("App moved to background")
-            // PiP가 활성화되어 있지 않으면 스트림 일시정지 고려
+            print("App moved to background - System PiP should continue")
+            // System PiP는 백그라운드에서도 계속 실행됨
             
         case .inactive:
             print("App is inactive")
             
         case .active:
             print("App is active")
-            // 필요시 스트림 재개
+            // 필요시 스트림 상태 확인
             
         @unknown default:
             break
@@ -36,19 +37,24 @@ struct RTSPPlayerApp: App {
     }
 }
 
-// MARK: - App Delegate
+// MARK: - Enhanced App Delegate for System PiP
 class AppDelegate: NSObject, UIApplicationDelegate {
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         
-        // 오디오 세션 설정 (백그라운드 재생 및 PiP를 위해)
-        configureAudioSession()
+        // System PiP를 위한 오디오 세션 설정
+        configureAudioSessionForSystemPiP()
         
         // VLC 로깅 설정
         configureVLCLogging()
         
         // 화면 자동 잠금 방지 (비디오 재생 중)
         UIApplication.shared.isIdleTimerDisabled = true
+        
+        // Background Tasks 등록
+        registerBackgroundTasks()
+        
+        print("App launched with System PiP support")
         
         return true
     }
@@ -58,69 +64,210 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         return .all
     }
     
+    // MARK: - Background App Refresh
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        print("App entered background - Background modes active")
+        
+        // System PiP가 활성화된 상태라면 백그라운드에서 계속 실행
+        let pipManager = PictureInPictureManager.shared
+        if pipManager.isPiPActive {
+            print("System PiP active - maintaining background execution")
+        }
+    }
+    
+    func applicationWillEnterForeground(_ application: UIApplication) {
+        print("App will enter foreground")
+        
+        // 오디오 세션 재활성화
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            print("Audio session reactivated")
+        } catch {
+            print("Failed to reactivate audio session: \(error)")
+        }
+    }
+    
     // MARK: - Private Methods
     
-    private func configureAudioSession() {
+    private func configureAudioSessionForSystemPiP() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
             
-            // 백그라운드 재생을 위한 카테고리 설정
-            try audioSession.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            // System PiP를 위한 강화된 오디오 세션 설정
+            try audioSession.setCategory(
+                .playback,
+                mode: .moviePlayback,
+                options: [.mixWithOthers, .allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
+            )
             
             // 오디오 세션 활성화
             try audioSession.setActive(true)
             
-            print("Audio session configured successfully")
+            print("Enhanced audio session configured for System PiP")
+            
+            // 오디오 인터럽션 관찰
+            NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleAudioInterruption(notification)
+            }
+            
         } catch {
-            print("Failed to configure audio session: \(error)")
+            print("Failed to configure audio session for System PiP: \(error)")
+        }
+    }
+    
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+        
+        switch type {
+        case .began:
+            print("Audio interruption began - System PiP may pause")
+            
+        case .ended:
+            print("Audio interruption ended - System PiP resuming")
+            
+            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) {
+                    // 오디오 세션 재활성화
+                    do {
+                        try AVAudioSession.sharedInstance().setActive(true)
+                        print("Audio session resumed after interruption")
+                    } catch {
+                        print("Failed to resume audio session: \(error)")
+                    }
+                }
+            }
+            
+        @unknown default:
+            break
         }
     }
     
     private func configureVLCLogging() {
-        // VLC 로깅 설정 (deprecated 메서드 제거)
         #if DEBUG
-        // 디버그 모드에서는 콘솔 로거 사용
+        // 디버그 모드에서는 상세 로깅
         let consoleLogger = VLCConsoleLogger()
         VLCLibrary.shared().setLogger(consoleLogger)
+        print("VLC debug logging enabled")
+        #else
+        // 릴리즈 모드에서는 최소 로깅
+        print("VLC logging configured for release")
         #endif
+    }
+    
+    private func registerBackgroundTasks() {
+        // Background App Refresh 등록 (iOS 13+)
+        if #available(iOS 13.0, *) {
+            // Background processing identifier는 Info.plist에 등록되어야 함
+            let identifier = "com.sky.RTSPPlayer.background-refresh"
+            
+            let success = BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: identifier,
+                using: nil
+            ) { task in
+                self.handleBackgroundRefresh(task as! BGAppRefreshTask)
+            }
+            
+            if success {
+                print("Background task registered successfully")
+            } else {
+                print("Failed to register background task")
+            }
+        }
+    }
+    
+    @available(iOS 13.0, *)
+    private func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        print("Background refresh task executed")
+        
+        // System PiP 상태 확인 및 유지
+        let pipManager = PictureInPictureManager.shared
+        if pipManager.isPiPActive {
+            print("Maintaining System PiP in background")
+            // 필요한 경우 여기서 추가 작업 수행
+        }
+        
+        // 작업 완료 표시
+        task.setTaskCompleted(success: true)
+    }
+    
+    // MARK: - Cleanup
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
 
-// MARK: - Scene Delegate (필요시 사용)
+// MARK: - Scene Delegate for System PiP
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     
     var window: UIWindow?
     
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        // 씬 연결 시 초기 설정
-        guard let _ = (scene as? UIWindowScene) else { return }
+        guard let windowScene = (scene as? UIWindowScene) else { return }
         
-        // 상태바 스타일은 Info.plist에서 설정
+        // System PiP를 위한 윈도우 설정
+        setupWindowForSystemPiP(windowScene: windowScene)
+        
+        print("Scene connected with System PiP support")
     }
     
     func sceneDidDisconnect(_ scene: UIScene) {
-        // 씬 연결 해제 시 정리 작업
+        print("Scene disconnected")
     }
     
     func sceneDidBecomeActive(_ scene: UIScene) {
-        // 씬이 활성화될 때
+        print("Scene became active")
+        
+        // System PiP 상태 확인
+        let pipManager = PictureInPictureManager.shared
+        if pipManager.isPiPActive {
+            print("Scene active with System PiP running")
+        }
     }
     
     func sceneWillResignActive(_ scene: UIScene) {
-        // 씬이 비활성화될 때
+        print("Scene will resign active")
     }
     
     func sceneWillEnterForeground(_ scene: UIScene) {
-        // 포그라운드 진입 시
+        print("Scene will enter foreground")
     }
     
     func sceneDidEnterBackground(_ scene: UIScene) {
-        // 백그라운드 진입 시
-        // PiP가 활성화되어 있지 않으면 리소스 절약을 위해 일시정지 고려
+        print("Scene entered background")
+        
+        // System PiP가 활성화되어 있으면 백그라운드 실행 계속
+        let pipManager = PictureInPictureManager.shared
+        if pipManager.isPiPActive {
+            print("System PiP active - background execution maintained")
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func setupWindowForSystemPiP(windowScene: UIWindowScene) {
+        // System PiP를 위한 윈도우 최적화 설정
+        if let window = windowScene.windows.first {
+            // 윈도우 레벨 설정 (필요한 경우)
+            window.windowLevel = UIWindow.Level.normal
+            
+            print("Window configured for System PiP")
+        }
     }
 }
 
-// MARK: - Extensions
+// MARK: - Background Task Scheduler Import
+import BackgroundTasks
+
+// MARK: - Extensions for System PiP
 extension UIApplication {
     /// 현재 활성 윈도우 씬 가져오기
     var currentScene: UIWindowScene? {
@@ -131,5 +278,10 @@ extension UIApplication {
     /// 현재 키 윈도우 가져오기
     var currentKeyWindow: UIWindow? {
         currentScene?.windows.first { $0.isKeyWindow }
+    }
+    
+    /// System PiP 상태 확인
+    var isSystemPiPActive: Bool {
+        return PictureInPictureManager.shared.isPiPActive
     }
 }
