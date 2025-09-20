@@ -5,7 +5,7 @@ import AVKit
 import CoreMedia
 import CoreVideo
 
-// MARK: - RTSP Player UIView with Direct VLC Frame Processing
+// MARK: - RTSP Player UIView with VLCKit Integration
 class RTSPPlayerUIView: UIView {
     
     // VLC Components
@@ -13,7 +13,6 @@ class RTSPPlayerUIView: UIView {
     private var media: VLCMedia?
     
     // Video Layer for proper rendering
-    private var videoLayer: CALayer?
     private var videoContainerView: UIView?
     
     // PiP Components
@@ -68,11 +67,8 @@ class RTSPPlayerUIView: UIView {
         // Create video container view
         setupVideoContainer()
         
-        // Initialize VLC Media Player with video callbacks
+        // Initialize VLC Media Player
         mediaPlayer = VLCMediaPlayer()
-        
-        // CRITICAL: Setup direct video frame callbacks
-        setupDirectVideoFrameCallbacks()
         
         // Set drawable to the container view
         mediaPlayer?.drawable = videoContainerView
@@ -82,7 +78,7 @@ class RTSPPlayerUIView: UIView {
         // Configure VLC for proper rendering
         configureVLCPlayer()
         
-        print("VLC Player initialized with direct frame callbacks")
+        print("VLC Player initialized successfully")
     }
     
     private func setupVideoContainer() {
@@ -108,174 +104,13 @@ class RTSPPlayerUIView: UIView {
         print("Video container setup completed")
     }
     
-    // MARK: - CRITICAL: Direct VLC Video Frame Callbacks
-    private func setupDirectVideoFrameCallbacks() {
-        guard let player = mediaPlayer else { return }
-        
-        // Set video format callback
-        player.setVideoFormatCallback { (chroma, width, height, pitches, lines) -> Unmanaged<AnyObject>? in
-            print("VLC Video format: \(String(cString: chroma!)) \(width)x\(height)")
-            
-            // Configure for BGRA format which is optimal for iOS
-            let format = "BGRA"
-            strcpy(chroma, format)
-            
-            return nil
-        }
-        
-        // Set video callbacks for direct frame access
-        player.setVideoCallbacks(
-            lock: { (opaque, planes) -> UnsafeMutableRawPointer? in
-                // Lock callback - prepare buffer for writing
-                return opaque
-            },
-            unlock: { (opaque, picture, planes) in
-                // Unlock callback - frame is ready
-                guard let opaque = opaque else { return }
-                
-                let playerView = Unmanaged<RTSPPlayerUIView>.fromOpaque(opaque).takeUnretainedValue()
-                playerView.processDirectVideoFrame(picture: picture, planes: planes)
-            },
-            display: { (opaque, picture) in
-                // Display callback - frame should be displayed
-                // This is called after unlock
-            },
-            opaque: Unmanaged.passUnretained(self).toOpaque()
-        )
-        
-        print("Direct VLC video callbacks configured")
-    }
-    
-    // MARK: - Direct Frame Processing
-    private func processDirectVideoFrame(picture: UnsafeMutableRawPointer?, planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?) {
-        // This method is called directly from VLC with raw frame data
-        guard let picture = picture, let planes = planes else { return }
-        
-        // Get video dimensions from VLC
-        guard let player = mediaPlayer else { return }
-        let videoSize = player.videoSize
-        
-        guard videoSize.width > 0 && videoSize.height > 0 else { return }
-        
-        let width = Int(videoSize.width)
-        let height = Int(videoSize.height)
-        
-        // Create CVPixelBuffer from VLC frame data
-        if let pixelBuffer = createPixelBufferFromVLCFrame(
-            planes: planes,
-            width: width,
-            height: height
-        ) {
-            // Convert to CMSampleBuffer and send to PiP
-            if let sampleBuffer = createSampleBufferFromPixelBuffer(pixelBuffer, width: width, height: height) {
-                DispatchQueue.main.async { [weak self] in
-                    self?.pipManager.receivedDirectFrame(sampleBuffer)
-                }
-            }
-        }
-    }
-    
-    private func createPixelBufferFromVLCFrame(
-        planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>,
-        width: Int,
-        height: Int
-    ) -> CVPixelBuffer? {
-        
-        let attrs: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-        ]
-        
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attrs as CFDictionary,
-            &pixelBuffer
-        )
-        
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            print("Failed to create pixel buffer")
-            return nil
-        }
-        
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer),
-              let sourceData = planes[0] else {
-            print("Failed to get buffer addresses")
-            return nil
-        }
-        
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        let sourceBytes = width * 4 // BGRA = 4 bytes per pixel
-        
-        // Copy frame data from VLC to CVPixelBuffer
-        for row in 0..<height {
-            let sourceRow = sourceData.advanced(by: row * sourceBytes)
-            let destRow = baseAddress.advanced(by: row * bytesPerRow)
-            memcpy(destRow, sourceRow, sourceBytes)
-        }
-        
-        return buffer
-    }
-    
-    private func createSampleBufferFromPixelBuffer(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) -> CMSampleBuffer? {
-        var formatDescription: CMVideoFormatDescription?
-        let status = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &formatDescription
-        )
-        
-        guard status == noErr, let format = formatDescription else {
-            print("Failed to create format description")
-            return nil
-        }
-        
-        // Use host time for proper synchronization
-        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
-        let duration = CMTime(value: 1, timescale: 30) // 30 FPS
-        
-        var timingInfo = CMSampleTimingInfo(
-            duration: duration,
-            presentationTimeStamp: hostTime,
-            decodeTimeStamp: .invalid
-        )
-        
-        var sampleBuffer: CMSampleBuffer?
-        let result = CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescription: format,
-            sampleTiming: &timingInfo,
-            sampleBufferOut: &sampleBuffer
-        )
-        
-        guard result == noErr else {
-            print("Failed to create sample buffer: \(result)")
-            return nil
-        }
-        
-        return sampleBuffer
-    }
-    
     private func configureVLCPlayer() {
         guard let player = mediaPlayer else { return }
         
         // Configure video aspect ratio and scaling
         player.videoAspectRatio = nil // Let VLC auto-detect
         
-        // Enable hardware decoding
-        if let videoView = videoContainerView {
-            videoView.contentMode = .scaleAspectFit
-        }
-        
-        print("VLC Player configured for direct frame capture")
+        print("VLC Player configured successfully")
     }
     
     private func setupPerformanceMonitoring() {
@@ -330,7 +165,7 @@ class RTSPPlayerUIView: UIView {
             self?.mediaPlayer?.drawable = self?.videoContainerView
             self?.mediaPlayer?.play()
             
-            print("Starting stream with direct frame capture: \(url)")
+            print("Starting stream: \(url)")
             
             // Setup PiP after a delay
             self?.setupPiPAfterDelay()
@@ -338,7 +173,8 @@ class RTSPPlayerUIView: UIView {
     }
     
     private func buildAuthenticatedURL(url: String, username: String?, password: String?) -> String {
-        guard let username = username, let password = password else { return url }
+        guard let username = username, let password = password,
+              !username.isEmpty, !password.isEmpty else { return url }
         
         if let urlComponents = URLComponents(string: url) {
             let components = urlComponents
@@ -349,6 +185,9 @@ class RTSPPlayerUIView: UIView {
                 urlString += ":\(port)"
             }
             urlString += components.path
+            if let query = components.query {
+                urlString += "?\(query)"
+            }
             return urlString
         }
         
@@ -375,7 +214,7 @@ class RTSPPlayerUIView: UIView {
             }
         }
         
-        // Additional codec optimizations for direct frame capture
+        // Additional codec optimizations
         media.addOption("--intf=dummy")
         media.addOption("--no-audio-time-stretch")
         media.addOption("--no-network-synchronisation")
@@ -384,10 +223,7 @@ class RTSPPlayerUIView: UIView {
         media.addOption("--video-filter=")
         media.addOption("--deinterlace=0")
         
-        // Force specific video output format for callbacks
-        media.addOption("--vout=ios_window_provider")
-        
-        print("Applied optimizations with caching: \(caching)ms for direct frame capture")
+        print("Applied optimizations with caching: \(caching)ms")
     }
     
     private func setupPiPAfterDelay() {
@@ -402,11 +238,11 @@ class RTSPPlayerUIView: UIView {
               mediaPlayer.isPlaying,
               !isPiPEnabled else { return }
         
-        // Connect PiP manager to the video container view
-        pipManager.connectToVLCPlayerDirect(mediaPlayer, containerView: containerView)
+        // Connect PiP manager to the VLC player
+        pipManager.connectToVLCPlayer(mediaPlayer, containerView: containerView)
         isPiPEnabled = true
         
-        print("PiP setup completed with direct frame capture")
+        print("PiP setup completed")
     }
     
     func stop() {
@@ -476,7 +312,7 @@ class RTSPPlayerUIView: UIView {
         
         // Network info
         info.isBuffering = mediaPlayer.state == .buffering
-        info.droppedFrames = getDroppedFrames()
+        info.droppedFrames = 0 // VLCKit doesn't expose this directly
         
         // Performance info
         if let performance = performanceMonitor?.getCurrentMetrics() {
@@ -500,10 +336,6 @@ class RTSPPlayerUIView: UIView {
         }
         
         return "Unknown"
-    }
-    
-    private func getDroppedFrames() -> Int {
-        return 0
     }
     
     // MARK: - PiP Control
@@ -558,22 +390,22 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     func mediaPlayerStateChanged(_ aNotification: Notification) {
         guard let player = aNotification.object as? VLCMediaPlayer else { return }
         
-        switch player.state {
-        case .opening:
-            print("VLC: Opening stream...")
-            streamInfo?.state = "Opening"
-            
-        case .buffering:
-            let bufferPercent = player.position * 100
-            print("VLC: Buffering... \(Int(bufferPercent))%")
-            streamInfo?.state = "Buffering"
-            
-        case .playing:
-            print("VLC: Playing with direct frame capture - Video size: \(player.videoSize)")
-            streamInfo?.state = "Playing"
-            
-            // Ensure proper video rendering
-            DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
+            switch player.state {
+            case .opening:
+                print("VLC: Opening stream...")
+                self?.streamInfo?.state = "Opening"
+                
+            case .buffering:
+                let bufferPercent = player.position * 100
+                print("VLC: Buffering... \(Int(bufferPercent))%")
+                self?.streamInfo?.state = "Buffering"
+                
+            case .playing:
+                print("VLC: Playing - Video size: \(player.videoSize)")
+                self?.streamInfo?.state = "Playing"
+                
+                // Ensure proper video rendering
                 self?.videoContainerView?.setNeedsLayout()
                 self?.setNeedsLayout()
                 
@@ -581,43 +413,45 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
                 if self?.isPiPEnabled == false {
                     self?.setupPiPAfterDelay()
                 }
+                
+            case .paused:
+                print("VLC: Paused")
+                self?.streamInfo?.state = "Paused"
+                
+            case .stopped:
+                print("VLC: Stopped")
+                self?.streamInfo?.state = "Stopped"
+                
+            case .error:
+                print("VLC: Error occurred")
+                self?.streamInfo?.state = "Error"
+                self?.streamInfo?.lastError = "Stream playback error"
+                
+            case .ended:
+                print("VLC: Ended")
+                self?.streamInfo?.state = "Ended"
+                
+            case .esAdded:
+                print("VLC: Elementary stream added")
+                self?.streamInfo?.state = "ES Added"
+                
+            @unknown default:
+                print("VLC: Unknown state")
             }
-            
-        case .paused:
-            print("VLC: Paused")
-            streamInfo?.state = "Paused"
-            
-        case .stopped:
-            print("VLC: Stopped")
-            streamInfo?.state = "Stopped"
-            
-        case .error:
-            print("VLC: Error occurred")
-            streamInfo?.state = "Error"
-            streamInfo?.lastError = "Stream playback error"
-            
-        case .ended:
-            print("VLC: Ended")
-            streamInfo?.state = "Ended"
-            
-        case .esAdded:
-            print("VLC: Elementary stream added")
-            streamInfo?.state = "ES Added"
-            
-        @unknown default:
-            print("VLC: Unknown state")
         }
     }
     
     func mediaPlayerTimeChanged(_ aNotification: Notification) {
         if let player = aNotification.object as? VLCMediaPlayer {
-            streamInfo?.time = TimeInterval(player.time.intValue / 1000)
-            streamInfo?.position = player.position
+            DispatchQueue.main.async { [weak self] in
+                self?.streamInfo?.time = TimeInterval(player.time.intValue / 1000)
+                self?.streamInfo?.position = player.position
+            }
         }
     }
 }
 
-// MARK: - Stream Info Model (unchanged)
+// MARK: - Stream Info Model
 struct StreamInfo {
     var state: String = "Idle"
     var resolution: CGSize = .zero
@@ -654,7 +488,7 @@ struct StreamInfo {
     }
 }
 
-// MARK: - Performance Monitor (unchanged)
+// MARK: - Performance Monitor
 class PerformanceMonitor {
     private var timer: Timer?
     private var lastCPUInfo: host_cpu_load_info?
@@ -681,7 +515,7 @@ class PerformanceMonitor {
         
         metrics.cpuUsage = getCPUUsage()
         metrics.memoryUsage = getMemoryUsage()
-        metrics.fps = 30.0 // Placeholder
+        metrics.fps = 30.0 // Placeholder - VLCKit doesn't expose FPS directly
         
         return metrics
     }
@@ -729,7 +563,7 @@ class PerformanceMonitor {
     }
 }
 
-// MARK: - SwiftUI Wrapper (unchanged)
+// MARK: - SwiftUI Wrapper
 struct RTSPPlayerView: UIViewRepresentable {
     @Binding var url: String
     @Binding var isPlaying: Bool
@@ -759,8 +593,7 @@ struct RTSPPlayerView: UIViewRepresentable {
             }
         }
         
-        uiView.updateNetworkCaching(networkCaching)
-        
+        // Update network caching if needed
         if let info = uiView.getStreamInfo() {
             onStreamInfo?(info)
         }
@@ -792,9 +625,11 @@ struct RTSPPlayerView: UIViewRepresentable {
         }
         
         func pipWillStart() {
+            print("PiP will start")
         }
         
         func pipWillStop() {
+            print("PiP will stop")
         }
         
         func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
