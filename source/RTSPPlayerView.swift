@@ -3,7 +3,7 @@ import SwiftUI
 import VLCKitSPM
 import AVKit
 
-// MARK: - Enhanced RTSP Player UIView with System Level PiP (Software Rendering)
+// MARK: - Enhanced RTSP Player UIView with System Level PiP
 class RTSPPlayerUIView: UIView {
     
     // VLC Components
@@ -30,7 +30,7 @@ class RTSPPlayerUIView: UIView {
     var onStreamInfoUpdate: ((StreamInfo) -> Void)?
     var onPiPStatusUpdate: ((Bool) -> Void)?
     
-    // Low latency optimization settings (SOFTWARE RENDERING - NO HARDWARE ACCELERATION)
+    // Low latency optimization settings
     private let lowLatencyOptions: [String: String] = [
         "network-caching": "150",
         "rtsp-caching": "150", 
@@ -38,7 +38,7 @@ class RTSPPlayerUIView: UIView {
         "realrtsp-caching": "150",
         "clock-jitter": "150",
         "rtsp-tcp": "",
-        // REMOVED: "avcodec-hw": "videotoolbox" - 하드웨어 가속 비활성화
+        "avcodec-hw": "videotoolbox",
         "clock-synchro": "0",
         "avcodec-skiploopfilter": "0",
         "avcodec-skip-frame": "0", 
@@ -78,10 +78,10 @@ class RTSPPlayerUIView: UIView {
             return
         }
         
-        // Configure player for optimal streaming (SOFTWARE RENDERING)
+        // Configure player for optimal streaming
         configureVLCPlayer(player)
         
-        print("✅ VLC Player initialized with SOFTWARE RENDERING for PiP compatibility")
+        print("✅ VLC Player initialized with enhanced configuration")
         isSetupComplete = true
     }
     
@@ -129,7 +129,7 @@ class RTSPPlayerUIView: UIView {
             videoView.contentMode = .scaleAspectFit
         }
         
-        print("⚙️ VLC Player configured for software rendering (PiP compatible)")
+        print("⚙️ VLC Player configured for optimal streaming")
     }
     
     private func setupPerformanceMonitoring() {
@@ -183,7 +183,7 @@ class RTSPPlayerUIView: UIView {
             return
         }
         
-        // Apply enhanced stream optimizations (SOFTWARE RENDERING)
+        // Apply enhanced stream optimizations
         applyStreamOptimizations(media: media, caching: networkCaching)
         
         // Configure player and start playback
@@ -259,11 +259,11 @@ class RTSPPlayerUIView: UIView {
         media.addOption("--no-spu")
         media.addOption("--no-osd")
         
-        // SOFTWARE RENDERING - 하드웨어 디코딩 비활성화
-        // REMOVED: media.addOption("--avcodec-hw=videotoolbox")
-        // REMOVED: media.addOption("--videotoolbox-temporal-deinterlacing")
+        // Hardware decoding optimization
+        media.addOption("--avcodec-hw=videotoolbox")
+        media.addOption("--videotoolbox-temporal-deinterlacing")
         
-        print("⚡ Applied SOFTWARE RENDERING optimizations with \(caching)ms caching (PiP compatible)")
+        print("⚡ Applied optimizations with \(caching)ms caching")
     }
     
     private func setupPiPAfterDelay() {
@@ -282,13 +282,13 @@ class RTSPPlayerUIView: UIView {
             return 
         }
         
-        print("🔗 Setting up enhanced PiP with SOFTWARE RENDERING...")
+        print("🔗 Setting up enhanced PiP...")
         
         // Connect PiP manager to VLC player
         pipManager.connectToVLCPlayer(mediaPlayer, containerView: containerView)
         isPiPConnected = true
         
-        print("✅ Enhanced PiP setup completed (software rendering mode)")
+        print("✅ Enhanced PiP setup completed")
     }
     
     // MARK: - Playback Control
