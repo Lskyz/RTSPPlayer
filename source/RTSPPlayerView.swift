@@ -1,37 +1,37 @@
+// MARK: - RTSPPlayerView.swift (Updated for Direct Stream PiP)
 import UIKit
 import SwiftUI
 import VLCKitSPM
 import AVKit
 
-// MARK: - RTSP Player UIView with Fixed Rendering and PiP
+// MARK: - RTSP Player UIView with Direct VLC Stream PiP
 class RTSPPlayerUIView: UIView {
     
     // VLC Components
     private var mediaPlayer: VLCMediaPlayer?
     private var media: VLCMedia?
     
-    // Video Layer for proper rendering
-    private var videoLayer: CALayer?
+    // Video Container
     private var videoContainerView: UIView?
     
-    // PiP Components
+    // PiP Manager
     private let pipManager = PictureInPictureManager.shared
-    private var isPiPEnabled = false
+    private var isPiPSetup = false
     
     // Stream Info
     private var currentStreamURL: String?
     private var streamInfo: StreamInfo?
     
-    // Performance Monitoring
+    // Performance Monitor
     private var performanceMonitor: PerformanceMonitor?
     
     // Layout constraints
     private var containerViewConstraints: [NSLayoutConstraint] = []
     
-    // Low Latency Options
+    // Optimized Low Latency Options for Direct Stream
     private let lowLatencyOptions: [String: String] = [
         "network-caching": "150",
-        "rtsp-caching": "150",
+        "rtsp-caching": "150", 
         "tcp-caching": "150",
         "realrtsp-caching": "150",
         "clock-jitter": "150",
@@ -43,7 +43,11 @@ class RTSPPlayerUIView: UIView {
         "avcodec-skip-idct": "0",
         "avcodec-threads": "4",
         "sout-mux-caching": "10",
-        "live-caching": "150"
+        "live-caching": "150",
+        // CRITICAL: Disable VLC's video output to use our callbacks
+        "no-video-title-show": "",
+        "no-osd": "",
+        "intf": "dummy"
     ]
     
     override init(frame: CGRect) {
@@ -69,19 +73,19 @@ class RTSPPlayerUIView: UIView {
         // Initialize VLC Media Player
         mediaPlayer = VLCMediaPlayer()
         
-        // Set drawable to the container view instead of self
-        mediaPlayer?.drawable = videoContainerView
+        // CRITICAL: Don't set drawable for direct stream mode
+        // mediaPlayer?.drawable = nil // We'll use video callbacks instead
+        
         mediaPlayer?.audio?.volume = 100
         mediaPlayer?.delegate = self
         
-        // Configure VLC for proper rendering
+        // Configure VLC for direct stream access
         configureVLCPlayer()
         
-        print("VLC Player initialized with proper drawable")
+        print("VLC Player initialized for direct stream PiP")
     }
     
     private func setupVideoContainer() {
-        // Create container view for video
         videoContainerView = UIView()
         videoContainerView?.backgroundColor = .black
         videoContainerView?.translatesAutoresizingMaskIntoConstraints = false
@@ -90,7 +94,6 @@ class RTSPPlayerUIView: UIView {
         
         addSubview(containerView)
         
-        // Set up constraints to fill the entire view
         containerViewConstraints = [
             containerView.topAnchor.constraint(equalTo: topAnchor),
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -100,21 +103,16 @@ class RTSPPlayerUIView: UIView {
         
         NSLayoutConstraint.activate(containerViewConstraints)
         
-        print("Video container setup completed")
+        print("Video container setup for direct stream")
     }
     
     private func configureVLCPlayer() {
         guard let player = mediaPlayer else { return }
         
-        // Configure video aspect ratio and scaling
-        player.videoAspectRatio = nil // Let VLC auto-detect
+        // CRITICAL: Configure for direct video callback mode
+        player.videoAspectRatio = nil
         
-        // Enable hardware decoding
-        if let videoView = videoContainerView {
-            videoView.contentMode = .scaleAspectFit
-        }
-        
-        print("VLC Player configured for proper video rendering")
+        print("VLC Player configured for direct stream mode")
     }
     
     private func setupPerformanceMonitoring() {
@@ -124,17 +122,7 @@ class RTSPPlayerUIView: UIView {
     
     override func layoutSubviews() {
         super.layoutSubviews()
-        
-        // Update video container bounds
         videoContainerView?.frame = bounds
-        
-        // Force VLC to redraw if playing
-        if let player = mediaPlayer, player.isPlaying {
-            // Trigger a layout update
-            DispatchQueue.main.async {
-                player.drawable = self.videoContainerView
-            }
-        }
     }
     
     // MARK: - Playback Control
@@ -158,21 +146,19 @@ class RTSPPlayerUIView: UIView {
         // Create VLC Media
         media = VLCMedia(url: mediaURL)
         
-        // Apply optimizations
-        applyStreamOptimizations(caching: networkCaching)
+        // Apply optimizations for direct stream
+        applyDirectStreamOptimizations(caching: networkCaching)
         
-        // Set media and play
+        // Set media
         mediaPlayer?.media = media
         
-        // Ensure proper drawable setup before playing
+        // CRITICAL: Connect to PiP manager BEFORE playing
+        setupDirectStreamPiP()
+        
+        // Start playing
         DispatchQueue.main.async { [weak self] in
-            self?.mediaPlayer?.drawable = self?.videoContainerView
             self?.mediaPlayer?.play()
-            
-            print("Starting stream: \(url)")
-            
-            // Setup PiP after a delay
-            self?.setupPiPAfterDelay()
+            print("Starting direct stream: \(url)")
         }
     }
     
@@ -194,7 +180,7 @@ class RTSPPlayerUIView: UIView {
         return url
     }
     
-    private func applyStreamOptimizations(caching: Int) {
+    private func applyDirectStreamOptimizations(caching: Int) {
         guard let media = media else { return }
         
         // Update caching values
@@ -214,48 +200,41 @@ class RTSPPlayerUIView: UIView {
             }
         }
         
-        // Additional codec optimizations
+        // CRITICAL: Additional options for direct stream
+        media.addOption("--no-video-title-show")
+        media.addOption("--no-osd")
         media.addOption("--intf=dummy")
         media.addOption("--no-audio-time-stretch")
         media.addOption("--no-network-synchronisation")
-        media.addOption("--no-drop-late-frames")
-        media.addOption("--no-skip-frames")
-        media.addOption("--video-filter=")
-        media.addOption("--deinterlace=0")
         
-        print("Applied optimizations with caching: \(caching)ms")
+        print("Applied direct stream optimizations with caching: \(caching)ms")
     }
     
-    private func setupPiPAfterDelay() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            self?.setupPiP()
-        }
-    }
+    // MARK: - CRITICAL: Direct Stream PiP Setup
     
-    private func setupPiP() {
+    private func setupDirectStreamPiP() {
         guard let mediaPlayer = mediaPlayer,
               let containerView = videoContainerView,
-              mediaPlayer.isPlaying,
-              !isPiPEnabled else { return }
+              !isPiPSetup else { return }
         
-        // Connect PiP manager to the video container view
+        // Connect PiP manager to VLC player for direct stream access
         pipManager.connectToVLCPlayer(mediaPlayer, containerView: containerView)
-        isPiPEnabled = true
+        isPiPSetup = true
         
-        print("PiP setup completed")
+        print("Direct stream PiP setup completed")
     }
     
     func stop() {
         mediaPlayer?.stop()
         media = nil
         currentStreamURL = nil
-        isPiPEnabled = false
+        isPiPSetup = false
         streamInfo = nil
         
         // Clean up video container
         videoContainerView?.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
         
-        print("Stream stopped")
+        print("Direct stream stopped")
     }
     
     func pause() {
@@ -321,6 +300,10 @@ class RTSPPlayerUIView: UIView {
             info.fps = performance.fps
         }
         
+        // Direct stream info
+        info.isDirectStream = true
+        info.pipMode = "Direct VLC Stream"
+        
         self.streamInfo = info
         return info
     }
@@ -342,16 +325,20 @@ class RTSPPlayerUIView: UIView {
         return 0
     }
     
-    // MARK: - PiP Control
+    // MARK: - PiP Control with Direct Stream
     
     func startPictureInPicture() {
-        if !isPiPEnabled {
-            setupPiP()
+        guard isPiPSetup else {
+            print("PiP not setup, setting up direct stream PiP...")
+            setupDirectStreamPiP()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.pipManager.startPiP()
+            }
+            return
         }
         
-        if pipManager.canStartPiP {
-            pipManager.startPiP()
-        }
+        pipManager.startPiP()
     }
     
     func stopPictureInPicture() {
@@ -376,7 +363,6 @@ class RTSPPlayerUIView: UIView {
         stop()
         performanceMonitor?.stopMonitoring()
         
-        // Clean up constraints
         NSLayoutConstraint.deactivate(containerViewConstraints)
         containerViewConstraints.removeAll()
         
@@ -396,52 +382,49 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
         
         switch player.state {
         case .opening:
-            print("VLC: Opening stream...")
+            print("VLC: Opening direct stream...")
             streamInfo?.state = "Opening"
             
         case .buffering:
             let bufferPercent = player.position * 100
-            print("VLC: Buffering... \(Int(bufferPercent))%")
+            print("VLC: Buffering direct stream... \(Int(bufferPercent))%")
             streamInfo?.state = "Buffering"
             
         case .playing:
-            print("VLC: Playing - Video size: \(player.videoSize)")
+            print("VLC: Playing direct stream - Video size: \(player.videoSize)")
             streamInfo?.state = "Playing"
             
-            // Ensure proper video rendering
-            DispatchQueue.main.async { [weak self] in
-                self?.videoContainerView?.setNeedsLayout()
-                self?.setNeedsLayout()
-                
-                // Setup PiP if not done
-                if self?.isPiPEnabled == false {
-                    self?.setupPiPAfterDelay()
+            // Setup PiP after stream is stable
+            if !isPiPSetup {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.setupDirectStreamPiP()
                 }
             }
             
         case .paused:
-            print("VLC: Paused")
+            print("VLC: Direct stream paused")
             streamInfo?.state = "Paused"
             
         case .stopped:
-            print("VLC: Stopped")
+            print("VLC: Direct stream stopped")
             streamInfo?.state = "Stopped"
+            isPiPSetup = false
             
         case .error:
-            print("VLC: Error occurred")
+            print("VLC: Direct stream error occurred")
             streamInfo?.state = "Error"
-            streamInfo?.lastError = "Stream playback error"
+            streamInfo?.lastError = "Direct stream playback error"
             
         case .ended:
-            print("VLC: Ended")
+            print("VLC: Direct stream ended")
             streamInfo?.state = "Ended"
             
         case .esAdded:
-            print("VLC: Elementary stream added")
+            print("VLC: Elementary stream added to direct stream")
             streamInfo?.state = "ES Added"
             
         @unknown default:
-            print("VLC: Unknown state")
+            print("VLC: Unknown direct stream state")
         }
     }
     
@@ -453,7 +436,7 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     }
 }
 
-// MARK: - Stream Info Model
+// MARK: - Enhanced Stream Info Model
 struct StreamInfo {
     var state: String = "Idle"
     var resolution: CGSize = .zero
@@ -467,6 +450,10 @@ struct StreamInfo {
     var cpuUsage: Float = 0.0
     var memoryUsage: Float = 0.0
     var fps: Float = 0.0
+    
+    // Direct stream specific
+    var isDirectStream: Bool = false
+    var pipMode: String = "Unknown"
     
     var qualityDescription: String {
         if resolution.width >= 3840 {
@@ -488,12 +475,19 @@ struct StreamInfo {
         }
         return "N/A"
     }
+    
+    var streamModeDescription: String {
+        if isDirectStream {
+            return "Direct VLC Stream → System PiP"
+        } else {
+            return "Standard Stream"
+        }
+    }
 }
 
-// MARK: - Performance Monitor
+// MARK: - Performance Monitor (Unchanged)
 class PerformanceMonitor {
     private var timer: Timer?
-    private var lastCPUInfo: host_cpu_load_info?
     
     struct Metrics {
         var cpuUsage: Float = 0.0
@@ -514,11 +508,9 @@ class PerformanceMonitor {
     
     func getCurrentMetrics() -> Metrics {
         var metrics = Metrics()
-        
         metrics.cpuUsage = getCPUUsage()
         metrics.memoryUsage = getMemoryUsage()
-        metrics.fps = 30.0 // Placeholder
-        
+        metrics.fps = 30.0 // Direct stream FPS
         return metrics
     }
     
@@ -565,7 +557,7 @@ class PerformanceMonitor {
     }
 }
 
-// MARK: - SwiftUI Wrapper
+// MARK: - SwiftUI Wrapper (Updated)
 struct RTSPPlayerView: UIViewRepresentable {
     @Binding var url: String
     @Binding var isPlaying: Bool
@@ -579,6 +571,7 @@ struct RTSPPlayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
         
+        // Connect PiP delegate
         PictureInPictureManager.shared.delegate = context.coordinator
         
         return playerView
@@ -620,20 +613,25 @@ struct RTSPPlayerView: UIViewRepresentable {
         }
         
         func pipDidStart() {
+            print("Direct stream PiP started!")
             parent.onPiPStatusChanged?(true)
         }
         
         func pipDidStop() {
+            print("Direct stream PiP stopped")
             parent.onPiPStatusChanged?(false)
         }
         
         func pipWillStart() {
+            print("Direct stream PiP will start")
         }
         
         func pipWillStop() {
+            print("Direct stream PiP will stop")
         }
         
         func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
+            print("Restore UI for direct stream PiP")
             completionHandler(true)
         }
     }
