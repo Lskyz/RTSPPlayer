@@ -251,7 +251,13 @@ struct ContentView: View {
                         isPlaying: $viewModel.isPlaying,
                         username: viewModel.selectedStream?.username,
                         password: viewModel.selectedStream?.password,
-                        networkCaching: viewModel.networkCaching
+                        networkCaching: viewModel.networkCaching,
+                        onStreamInfo: { info in
+                            currentStreamInfo = info
+                        },
+                        onPiPStatusChanged: { isActive in
+                            updatePiPDebugInfo()
+                        }
                     )
                     .frame(
                         width: geometry.size.width,
@@ -259,12 +265,6 @@ struct ContentView: View {
                     )
                     .background(Color.black)
                     .clipped()
-                    .onStreamInfoUpdate { info in
-                        currentStreamInfo = info
-                    }
-                    .onPiPStatusUpdate { isActive in
-                        updatePiPDebugInfo()
-                    }
                     .onTapGesture(count: 2) {
                         // Double tap to toggle PiP
                         pipManager.togglePiP()
