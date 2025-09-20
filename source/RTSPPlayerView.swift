@@ -26,6 +26,10 @@ class RTSPPlayerUIView: UIView {
     // Performance monitoring
     private var performanceMonitor: PerformanceMonitor?
     
+    // Callbacks
+    var onStreamInfoUpdate: ((StreamInfo) -> Void)?
+    var onPiPStatusUpdate: ((Bool) -> Void)?
+    
     // Low latency optimization settings
     private let lowLatencyOptions: [String: String] = [
         "network-caching": "150",
@@ -382,6 +386,10 @@ class RTSPPlayerUIView: UIView {
         info.isPiPPossible = pipManager.isPiPPossible
         
         self.streamInfo = info
+        
+        // Trigger callback
+        onStreamInfoUpdate?(info)
+        
         return info
     }
     
@@ -530,6 +538,11 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
             
         @unknown default:
             print("❓ VLC: Unknown state: \(player.state.rawValue)")
+        }
+        
+        // Update stream info
+        if let info = getStreamInfo() {
+            onStreamInfoUpdate?(info)
         }
     }
     
@@ -692,6 +705,10 @@ struct RTSPPlayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
         
+        // Set up callbacks
+        playerView.onStreamInfoUpdate = onStreamInfo
+        playerView.onPiPStatusUpdate = onPiPStatusChanged
+        
         // Set PiP delegate
         PictureInPictureManager.shared.delegate = context.coordinator
         
@@ -699,6 +716,10 @@ struct RTSPPlayerView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
+        // Update callbacks
+        uiView.onStreamInfoUpdate = onStreamInfo
+        uiView.onPiPStatusUpdate = onPiPStatusChanged
+        
         // Handle playback state changes
         if isPlaying {
             if !uiView.isPlaying() && !url.isEmpty {
@@ -765,21 +786,5 @@ struct RTSPPlayerView: UIViewRepresentable {
                 completionHandler(true)
             }
         }
-    }
-}
-
-// MARK: - SwiftUI View Extensions
-extension RTSPPlayerView {
-    
-    func onStreamInfoUpdate(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onStreamInfo = callback
-        return view
-    }
-    
-    func onPiPStatusUpdate(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onPiPStatusChanged = callback
-        return view
     }
 }
