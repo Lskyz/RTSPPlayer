@@ -25,7 +25,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.0</string>
+	<string>1.3.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSApplicationCategoryType</key>
@@ -36,6 +36,8 @@
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>16.0</string>
+	
+	<!-- Enhanced Network Security for RTSP -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -46,16 +48,42 @@
 		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+		</dict>
 	</dict>
+	
+	<!-- Enhanced Network Discovery -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_rtsp._tcp</string>
 		<string>_http._tcp</string>
+		<string>_rtmp._tcp</string>
+		<string>_streaming._tcp</string>
 	</array>
+	
+	<!-- Privacy Descriptions -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>이 앱은 로컬 네트워크의 IP 카메라에 연결하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
+	<string>이 앱은 로컬 네트워크의 IP 카메라 및 RTSP 스트림에 연결하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>RTSP 카메라 스트림을 재생하고 System PiP 기능을 제공하기 위해 카메라 권한이 필요합니다.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RTSP 스트림의 오디오를 재생하고 System PiP에서 오디오를 지원하기 위해 마이크 권한이 필요합니다.</string>
+	
+	<!-- CRITICAL: System Level Picture-in-Picture Support -->
 	<key>NSSupportsAutomaticPictureInPicture</key>
 	<true/>
+	<key>AVInitialRouteSharingPolicy</key>
+	<string>LongFormAudio</string>
+	
+	<!-- Enhanced Scene Configuration -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -73,25 +101,49 @@
 			</array>
 		</dict>
 	</dict>
-	<!-- CRITICAL: Background Modes for System Level PiP -->
+	
+	<!-- ESSENTIAL: Background Modes for System Level PiP -->
 	<key>UIBackgroundModes</key>
 	<array>
+		<!-- Core audio background mode for System PiP -->
 		<string>audio</string>
+		<!-- Background processing for frame handling -->
 		<string>background-processing</string>
+		<!-- Background fetch for stream management -->
 		<string>fetch</string>
-		<!-- ESSENTIAL for System PiP -->
+		<!-- Background audio for System PiP audio continuity -->
 		<string>background-audio</string>
+		<!-- AirPlay support for enhanced streaming -->
 		<string>airplay</string>
+		<!-- CRITICAL: Picture-in-Picture background mode -->
 		<string>picture-in-picture</string>
+		<!-- Voice over IP for network streaming -->
+		<string>voip</string>
 	</array>
+	
+	<!-- Background Task Identifiers -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.sky.RTSPPlayer.background-refresh</string>
+		<string>com.sky.RTSPPlayer.frame-processing</string>
+		<string>com.sky.RTSPPlayer.stream-maintenance</string>
+	</array>
+	
+	<!-- File Sharing and Document Support -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>UISupportsDocumentBrowser</key>
+	<true/>
+	
+	<!-- Enhanced Launch Configuration -->
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiresFullScreen</key>
 	<false/>
 	<key>UIStatusBarStyle</key>
 	<string>UIStatusBarStyleLightContent</string>
+	
+	<!-- Comprehensive Orientation Support -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -106,22 +158,121 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	
+	<!-- Status Bar Configuration -->
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>UIStatusBarHidden</key>
+	<false/>
+	
+	<!-- Enhanced Networking Capabilities -->
 	<key>com.apple.developer.networking.multicast</key>
 	<true/>
-	<!-- Enhanced PiP Support -->
-	<key>NSCameraUsageDescription</key>
-	<string>카메라 스트림 재생을 위해 필요합니다.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>오디오 스트림 재생을 위해 필요합니다.</string>
-	<!-- System PiP Optimization -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	
+	<!-- System PiP Optimization Settings -->
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
 		<string>AccentColor</string>
 		<key>UIImageName</key>
 		<string>AppIcon</string>
+		<key>UILaunchScreenMininumSize</key>
+		<dict>
+			<key>UILaunchScreenSize</key>
+			<string>{375, 667}</string>
+		</dict>
 	</dict>
+	
+	<!-- Media Playback Optimization -->
+	<key>AVAudioSessionCategoryPlayback</key>
+	<true/>
+	<key>AVAudioSessionCategoryOptions</key>
+	<array>
+		<string>AVAudioSessionCategoryOptionMixWithOthers</string>
+		<string>AVAudioSessionCategoryOptionAllowBluetooth</string>
+		<string>AVAudioSessionCategoryOptionAllowBluetoothA2DP</string>
+		<string>AVAudioSessionCategoryOptionAllowAirPlay</string>
+	</array>
+	
+	<!-- Enhanced Video Codec Support -->
+	<key>AVVideoCodecs</key>
+	<array>
+		<string>avc1</string>
+		<string>hev1</string>
+		<string>hvc1</string>
+		<string>vp09</string>
+	</array>
+	
+	<!-- System Integration -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>video-camera</string>
+		<string>microphone</string>
+		<string>wifi</string>
+	</array>
+	
+	<!-- Enhanced App Transport Security Exceptions -->
+	<key>NSExceptionDomains</key>
+	<dict>
+		<key>localhost</key>
+		<dict>
+			<key>NSExceptionAllowsInsecureHTTPLoads</key>
+			<true/>
+		</dict>
+		<key>127.0.0.1</key>
+		<dict>
+			<key>NSExceptionAllowsInsecureHTTPLoads</key>
+			<true/>
+		</dict>
+		<key>192.168.0.0</key>
+		<dict>
+			<key>NSExceptionAllowsInsecureHTTPLoads</key>
+			<true/>
+		</dict>
+		<key>10.0.0.0</key>
+		<dict>
+			<key>NSExceptionAllowsInsecureHTTPLoads</key>
+			<true/>
+		</dict>
+	</dict>
+	
+	<!-- Performance and Memory Optimization -->
+	<key>UIApplicationExitsOnSuspend</key>
+	<false/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	
+	<!-- Additional App Capabilities -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	
+	<!-- Enhanced Hardware Acceleration -->
+	<key>MetalPerformanceShadersGraph</key>
+	<true/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	
+	<!-- System PiP Debug Information -->
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIPrerenderedIcon</key>
+	<false/>
+	
+	<!-- Accessibility Support -->
+	<key>UIAccessibilityEnabled</key>
+	<true/>
+	<key>UIVoiceOverEnabled</key>
+	<true/>
 </dict>
 </plist>
