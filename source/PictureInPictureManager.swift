@@ -16,7 +16,7 @@ protocol PictureInPictureManagerDelegate: AnyObject {
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
 }
 
-// MARK: - Enhanced PiP Manager with Proper Frame Extraction
+// MARK: - Enhanced PiP Manager with System Level PiP Support
 class PictureInPictureManager: NSObject, ObservableObject {
     
     // Singleton
@@ -47,7 +47,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
     private let frameProcessingQueue = DispatchQueue(label: "com.rtspplayer.frame.processing", qos: .userInteractive)
     private let renderQueue = DispatchQueue(label: "com.rtspplayer.render", qos: .userInteractive)
     
-    // Timing
+    // Timing with Host Clock
     private var timebase: CMTimebase?
     private var lastPresentationTime = CMTime.zero
     private let frameDuration = CMTime(value: 1, timescale: 30) // 30 FPS
@@ -55,6 +55,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // Frame counter for debugging
     private var frameCount = 0
     private var lastFrameTime = CACurrentMediaTime()
+    private var firstFrameReceived = false
     
     override init() {
         super.init()
@@ -126,25 +127,28 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayerView = UIView(frame: containerView.bounds)
         displayLayerView?.backgroundColor = .clear
         displayLayerView?.layer.addSublayer(displayLayer)
-        displayLayerView?.isHidden = true // Initially hidden
+        
+        // CRITICAL FIX: Keep layer visible for system PiP
+        displayLayerView?.isHidden = false
+        displayLayerView?.alpha = 0.01 // Almost invisible but not zero
         
         // Add to container
         containerView.addSubview(displayLayerView!)
         
-        // Setup timebase
-        setupTimebase()
+        // Setup timebase with Host Clock
+        setupTimebaseWithHostClock()
         
-        print("Display layer configured with bounds: \(containerView.bounds)")
+        print("Display layer configured with bounds: \(containerView.bounds), visible for system PiP")
     }
     
-    private func setupTimebase() {
+    private func setupTimebaseWithHostClock() {
         guard let displayLayer = sampleBufferDisplayLayer else { return }
         
-        // Create timebase
+        // Create timebase with Host Clock for better sync
         var timebase: CMTimebase?
         let status = CMTimebaseCreateWithSourceClock(
             allocator: kCFAllocatorDefault,
-            sourceClock: CMClockGetHostTimeClock(),
+            sourceClock: CMClockGetHostTimeClock(), // Use Host Clock
             timebaseOut: &timebase
         )
         
@@ -156,7 +160,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
             CMTimebaseSetTime(tb, time: .zero)
             CMTimebaseSetRate(tb, rate: 1.0)
             
-            print("Timebase configured")
+            print("Timebase configured with Host Clock")
         }
     }
     
@@ -190,8 +194,9 @@ class PictureInPictureManager: NSObject, ObservableObject {
         
         pipController.delegate = self
         
+        // CRITICAL FIX: Enable automatic PiP transition
         if #available(iOS 14.2, *) {
-            pipController.canStartPictureInPictureAutomaticallyFromInline = false
+            pipController.canStartPictureInPictureAutomaticallyFromInline = true
         }
         
         observePiPStates()
@@ -228,14 +233,43 @@ class PictureInPictureManager: NSObject, ObservableObject {
         // Reset frame counter
         frameCount = 0
         lastFrameTime = CACurrentMediaTime()
+        firstFrameReceived = false
         
         // Start frame extraction
         frameExtractor?.startExtraction()
         
-        // Start PiP after a small delay to ensure frames are being generated
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.pipController?.startPictureInPicture()
-            print("Starting PiP")
+        // IMPROVED: Wait for first frame before starting PiP
+        waitForFirstFrameAndStartPiP()
+    }
+    
+    private func waitForFirstFrameAndStartPiP() {
+        let checkInterval: TimeInterval = 0.1
+        let maxWaitTime: TimeInterval = 3.0
+        var elapsedTime: TimeInterval = 0
+        
+        let timer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            elapsedTime += checkInterval
+            
+            // Check if we have received frames and layer is ready
+            if self.firstFrameReceived && (self.sampleBufferDisplayLayer?.isReadyForMoreMediaData == true) {
+                timer.invalidate()
+                print("First frame received, starting PiP")
+                self.pipController?.startPictureInPicture()
+            } else if elapsedTime >= maxWaitTime {
+                timer.invalidate()
+                print("Timeout waiting for first frame, starting PiP anyway")
+                self.pipController?.startPictureInPicture()
+            }
+        }
+        
+        // Store timer reference to prevent deallocation
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxWaitTime + 0.1) {
+            timer.invalidate()
         }
     }
     
@@ -276,6 +310,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
         
         timebase = nil
         lastPresentationTime = .zero
+        firstFrameReceived = false
         
         cancellables.removeAll()
         
@@ -298,26 +333,27 @@ class PictureInPictureManager: NSObject, ObservableObject {
         if !isPiPSupported {
             return "Not Supported"
         } else if isPiPActive {
-            return "Active"
+            return "System PiP Active"
         } else if isPiPPossible {
-            return "Ready"
+            return "Ready for System PiP"
         } else if vlcPlayer?.isPlaying ?? false {
-            return "Preparing"
+            return "Preparing System PiP"
         } else {
             return "Inactive"
         }
     }
 }
 
-// MARK: - Improved VLC Frame Extractor
+// MARK: - Improved VLC Frame Extractor with Background Timer
 class VLCFrameExtractor: NSObject {
     weak var vlcPlayer: VLCMediaPlayer?
     weak var delegate: VLCFrameExtractionDelegate?
     private var containerView: UIView
     
-    // Make isExtracting public to fix the access error
     var isExtracting = false
-    private var extractionTimer: Timer?
+    
+    // CRITICAL FIX: Use DispatchSourceTimer for background operation
+    private var extractionTimerSrc: DispatchSourceTimer?
     private let extractionQueue = DispatchQueue(label: "com.rtspplayer.extraction", qos: .userInteractive)
     
     // Snapshot path for frame extraction
@@ -361,48 +397,76 @@ class VLCFrameExtractor: NSObject {
         guard !isExtracting, vlcPlayer != nil else { return }
         isExtracting = true
         
-        // Use faster extraction method with snapshots
-        startSnapshotBasedExtraction()
+        // CRITICAL FIX: Use DispatchSourceTimer for background operation
+        startBackgroundTimerExtraction()
         
-        print("Frame extraction started")
+        print("Background frame extraction started")
     }
     
     func stopExtraction() {
         isExtracting = false
-        extractionTimer?.invalidate()
-        extractionTimer = nil
+        extractionTimerSrc?.cancel()
+        extractionTimerSrc = nil
         
-        print("Frame extraction stopped")
+        print("Background frame extraction stopped")
     }
     
-    private func startSnapshotBasedExtraction() {
-        // Use 30 FPS for smooth PiP
-        extractionTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+    private func startBackgroundTimerExtraction() {
+        let timer = DispatchSource.makeTimerSource(queue: extractionQueue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(33), leeway: .milliseconds(5)) // ~30 FPS
+        timer.setEventHandler { [weak self] in
             self?.extractFrameViaSnapshot()
         }
+        timer.resume()
+        extractionTimerSrc = timer
+        
+        print("Background timer configured for 30 FPS extraction")
     }
     
     private func extractFrameViaSnapshot() {
         guard let player = vlcPlayer,
-              player.isPlaying else { return }
+              player.isPlaying,
+              isExtracting else { return }
         
-        extractionQueue.async { [weak self] in
-            self?.captureFrameFromVLCSnapshot()
-        }
+        captureFrameFromVLCSnapshot()
     }
     
     private func captureFrameFromVLCSnapshot() {
         guard let player = vlcPlayer else { return }
         
         snapshotCounter += 1
+        // Cleanup old snapshots to prevent storage issues
+        if snapshotCounter > 100 {
+            cleanupOldSnapshots()
+            snapshotCounter = 1
+        }
+        
         let snapshotPath = "\(documentsPath)vlc_frame_\(snapshotCounter).png"
         
         // Use the corrected method name
         player.saveVideoSnapshot(at: snapshotPath, withWidth: 1920, andHeight: 1080)
         
-        // Wait a bit for file to be written
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        // Reduced wait time for better performance
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             self?.processSnapshotFile(at: snapshotPath)
+        }
+    }
+    
+    private func cleanupOldSnapshots() {
+        extractionQueue.async {
+            let fileManager = FileManager.default
+            let tempDir = NSTemporaryDirectory()
+            
+            do {
+                let files = try fileManager.contentsOfDirectory(atPath: tempDir)
+                for file in files {
+                    if file.hasPrefix("vlc_frame_") && file.hasSuffix(".png") {
+                        try fileManager.removeItem(atPath: tempDir + file)
+                    }
+                }
+            } catch {
+                print("Failed to cleanup snapshots: \(error)")
+            }
         }
     }
     
@@ -419,7 +483,7 @@ class VLCFrameExtractor: NSObject {
             processPixelBuffer(pixelBuffer)
         }
         
-        // Clean up snapshot file
+        // Clean up snapshot file immediately
         try? FileManager.default.removeItem(atPath: path)
     }
     
@@ -536,14 +600,14 @@ class VLCFrameExtractor: NSObject {
     }
     
     private func processPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
-        guard let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
+        guard let sampleBuffer = createSampleBufferWithHostClock(from: pixelBuffer) else { return }
         
         DispatchQueue.main.async { [weak self] in
             self?.delegate?.didExtractFrame(sampleBuffer)
         }
     }
     
-    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+    private func createSampleBufferWithHostClock(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
         var formatDescription: CMVideoFormatDescription?
         let status = CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,
@@ -556,13 +620,13 @@ class VLCFrameExtractor: NSObject {
             return nil
         }
         
-        let now = CACurrentMediaTime()
-        let presentationTime = CMTime(seconds: now, preferredTimescale: 1000000000)
+        // CRITICAL FIX: Use Host Clock for consistent timing
+        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
         let duration = CMTime(value: 1, timescale: 30)
         
         var timingInfo = CMSampleTimingInfo(
             duration: duration,
-            presentationTimeStamp: presentationTime,
+            presentationTimeStamp: hostTime,
             decodeTimeStamp: .invalid
         )
         
@@ -619,6 +683,12 @@ extension PictureInPictureManager: VLCFrameExtractionDelegate {
         
         frameCount += 1
         
+        // Mark first frame received for PiP timing
+        if !firstFrameReceived {
+            firstFrameReceived = true
+            print("First frame received, PiP can now start")
+        }
+        
         // Check if layer is ready
         guard displayLayer.status != .failed else {
             print("Display layer failed, resetting...")
@@ -637,7 +707,7 @@ extension PictureInPictureManager: VLCFrameExtractionDelegate {
             let currentTime = CACurrentMediaTime()
             if frameCount % 60 == 0 {
                 let fps = 60.0 / (currentTime - lastFrameTime)
-                print("PiP Frame rate: \(String(format: "%.1f", fps)) FPS")
+                print("System PiP Frame rate: \(String(format: "%.1f", fps)) FPS")
                 lastFrameTime = currentTime
             }
         } else {
@@ -653,7 +723,7 @@ extension PictureInPictureManager: VLCFrameExtractionDelegate {
 extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP will start")
+        print("System PiP will start")
         
         // Ensure frame extraction is running
         if frameExtractor?.isExtracting != true {
@@ -664,18 +734,18 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did start")
+        print("System PiP did start - Success!")
         isPiPActive = true
         delegate?.pipDidStart()
     }
     
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP will stop")
+        print("System PiP will stop")
         delegate?.pipWillStop()
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("PiP did stop")
+        print("System PiP did stop")
         isPiPActive = false
         
         frameExtractor?.stopExtraction()
@@ -685,12 +755,12 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    failedToStartPictureInPictureWithError error: Error) {
-        print("Failed to start PiP: \(error.localizedDescription)")
+        print("Failed to start System PiP: \(error.localizedDescription)")
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
-        print("Restore UI for PiP")
+        print("Restore UI for System PiP")
         delegate?.pipRestoreUserInterface(completionHandler: completionHandler)
     }
 }
@@ -720,7 +790,7 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
-        print("PiP render size changed: \(newRenderSize.width)x\(newRenderSize.height)")
+        print("System PiP render size changed: \(newRenderSize.width)x\(newRenderSize.height)")
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
