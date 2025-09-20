@@ -85,46 +85,30 @@ struct ContentView: View {
                         }
                     }
                     
-                    // Enhanced System PiP 상태 표시
+                    // Enhanced PiP 상태 표시
                     if pipManager.isPiPSupported {
-                        VStack(spacing: 4) {
-                            HStack {
-                                Text("System PiP:")
-                                Spacer()
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(systemPipStatusColor)
-                                        .frame(width: 8, height: 8)
-                                    Text(pipStatusText)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
+                        HStack {
+                            Text("Enhanced PiP:")
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(pipManager.isPiPActive ? Color.green : (pipManager.isPiPPossible ? Color.orange : Color.gray))
+                                    .frame(width: 8, height: 8)
+                                Text(pipStatusText)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
-                            
-                            // System PiP 상세 상태
+                        }
+                        
+                        // Debug info
+                        if viewModel.selectedStream != nil {
                             HStack {
-                                Text("상세 상태:")
+                                Text("PiP 상태:")
                                 Spacer()
                                 Text(pipManager.pipStatus)
                                     .font(.caption2)
                                     .foregroundColor(.blue)
                             }
-                            
-                            // Background Modes 확인
-                            HStack {
-                                Text("백그라운드 재생:")
-                                Spacer()
-                                Text("지원됨")
-                                    .font(.caption2)
-                                    .foregroundColor(.green)
-                            }
-                        }
-                    } else {
-                        HStack {
-                            Text("System PiP:")
-                            Spacer()
-                            Text("지원되지 않음")
-                                .foregroundColor(.red)
                         }
                     }
                 }
@@ -227,21 +211,15 @@ struct ContentView: View {
                         .foregroundColor(.white)
                 }
                 
-                // System PiP 버튼 with enhanced visual feedback
+                // Enhanced PiP 버튼
                 if pipManager.isPiPSupported {
                     Button(action: {
-                        print("System PiP button tapped - Can start: \(pipManager.canStartPiP)")
+                        print("PiP button tapped - Can start: \(pipManager.canStartPiP)")
                         pipManager.togglePiP()
                     }) {
-                        ZStack {
-                            Circle()
-                                .fill(pipManager.canStartPiP || pipManager.isPiPActive ? Color.blue.opacity(0.3) : Color.gray.opacity(0.3))
-                                .frame(width: 44, height: 44)
-                            
-                            Image(systemName: getSystemPiPButtonIcon())
-                                .font(.title2)
-                                .foregroundColor(pipManager.canStartPiP || pipManager.isPiPActive ? .white : .gray)
-                        }
+                        Image(systemName: getPiPButtonIcon())
+                            .font(.title2)
+                            .foregroundColor(pipManager.canStartPiP ? .white : .gray)
                     }
                     .disabled(!pipManager.canStartPiP && !pipManager.isPiPActive)
                 }
@@ -294,7 +272,7 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // Enhanced 지연 설정 with System PiP 최적화
+            // Enhanced 지연 설정 with 코덱 최적화
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("지연 설정: \(viewModel.selectedLatencyPreset.rawValue)")
@@ -303,14 +281,14 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    // System PiP 최적화 표시
-                    Text("System PiP 최적화")
+                    // 코덱 정보 표시
+                    Text("H.264/H.265 최적화")
                         .font(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.2))
+                        .background(Color.blue.opacity(0.2))
                         .cornerRadius(4)
-                        .foregroundColor(.green)
+                        .foregroundColor(.blue)
                 }
                 
                 Picker("지연 설정", selection: $viewModel.selectedLatencyPreset) {
@@ -326,14 +304,14 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // System PiP 상태와 컨트롤
+            // PiP 상태와 디버그 정보 표시
             if pipManager.isPiPSupported {
                 VStack(spacing: 8) {
                     HStack {
                         Image(systemName: "pip")
                             .foregroundColor(.blue)
                         
-                        Text("System PiP: \(pipStatusText)")
+                        Text("Enhanced PiP: \(pipStatusText)")
                             .font(.caption)
                             .foregroundColor(.gray)
                         
@@ -341,31 +319,16 @@ struct ContentView: View {
                         
                         if pipManager.canStartPiP || pipManager.isPiPActive {
                             Button(pipManager.isPiPActive ? "종료" : "시작") {
-                                print("Manual System PiP toggle - Current state: \(pipManager.isPiPActive)")
+                                print("Manual PiP toggle - Current state: \(pipManager.isPiPActive)")
                                 pipManager.togglePiP()
                             }
                             .font(.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(pipManager.isPiPActive ? Color.red.opacity(0.2) : Color.blue.opacity(0.2))
+                            .background(Color.blue.opacity(0.2))
                             .cornerRadius(4)
-                            .foregroundColor(pipManager.isPiPActive ? .red : .blue)
+                            .foregroundColor(.blue)
                         }
-                    }
-                    
-                    // System PiP 기능 설명
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("✓ 백그라운드 프레임 공급")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                        
-                        Text("✓ 홈 버튼으로 자동 전환")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                        
-                        Text("✓ HostClock 기반 동기화")
-                            .font(.caption2)
-                            .foregroundColor(.green)
                     }
                     
                     // Debug info for troubleshooting
@@ -412,36 +375,18 @@ struct ContentView: View {
                     }
                 }
                 
-                Section(header: Text("System PiP 설정")) {
+                Section(header: Text("Enhanced PiP 설정")) {
                     HStack {
-                        Text("System PiP 지원")
+                        Text("PiP 지원")
                         Spacer()
                         Text(pipManager.isPiPSupported ? "지원됨" : "지원 안됨")
                             .foregroundColor(pipManager.isPiPSupported ? .green : .red)
                     }
                     
                     if pipManager.isPiPSupported {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("System Level PiP 기능:")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            
-                            Text("• 백그라운드에서 지속적인 프레임 공급")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Text("• 홈 버튼으로 자동 PiP 전환")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Text("• HostClock 기반 정확한 타이밍")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Text("• H.264/H.265 하드웨어 디코딩 최적화")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        Text("H.264/H.265 스트림에서 Enhanced PiP를 지원합니다. 스트림 재생 후 PiP 버튼을 눌러주세요.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 
@@ -482,7 +427,7 @@ struct ContentView: View {
                     }
                 }
                 
-                Section(header: Text("System PiP 설정")) {
+                Section(header: Text("Enhanced PiP 설정")) {
                     HStack {
                         Text("PiP 지원")
                         Spacer()
@@ -507,25 +452,25 @@ struct ContentView: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("System Level Features")
+                            Text("Enhanced Features")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                             
-                            Text("• Background Modes: 활성화됨")
+                            Text("• H.264/H.265 하드웨어 디코딩")
                                 .font(.caption)
-                                .foregroundColor(.green)
+                                .foregroundColor(.secondary)
                             
-                            Text("• DispatchSourceTimer: 백그라운드 안전")
+                            Text("• 저지연 스트리밍 최적화")
                                 .font(.caption)
-                                .foregroundColor(.green)
+                                .foregroundColor(.secondary)
                             
-                            Text("• 자동 PiP 전환: 지원됨")
+                            Text("• 실시간 프레임 추출")
                                 .font(.caption)
-                                .foregroundColor(.green)
+                                .foregroundColor(.secondary)
                             
-                            Text("• HostClock 동기화: 활성화됨")
+                            Text("• 30 FPS 스냅샷 기반 렌더링")
                                 .font(.caption)
-                                .foregroundColor(.green)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
@@ -567,13 +512,6 @@ struct ContentView: View {
                         Text("16:9 고정")
                             .foregroundColor(.gray)
                     }
-                    
-                    HStack {
-                        Text("레이어 가시성")
-                        Spacer()
-                        Text("System PiP 최적화")
-                            .foregroundColor(.green)
-                    }
                 }
                 
                 Section(header: Text("정보")) {
@@ -592,7 +530,7 @@ struct ContentView: View {
                     }
                     
                     HStack {
-                        Text("System PiP")
+                        Text("Enhanced PiP")
                         Spacer()
                         Text("활성화됨")
                             .foregroundColor(.green)
@@ -665,7 +603,7 @@ struct ContentView: View {
                         }
                     }
                     
-                    Section(header: Text("System PiP 정보")) {
+                    Section(header: Text("디스플레이 정보")) {
                         HStack {
                             Text("플레이어 크기")
                             Spacer()
@@ -678,13 +616,6 @@ struct ContentView: View {
                             Spacer()
                             Text(pipManager.pipStatus)
                                 .foregroundColor(.blue)
-                        }
-                        
-                        HStack {
-                            Text("System PiP 레벨")
-                            Spacer()
-                            Text(pipManager.isPiPActive ? "활성" : "대기")
-                                .foregroundColor(pipManager.isPiPActive ? .green : .gray)
                         }
                     }
                 }
@@ -743,25 +674,15 @@ struct ContentView: View {
     
     private var pipStatusText: String {
         if pipManager.isPiPActive {
-            return "System PiP 활성"
+            return "활성"
         } else if pipManager.isPiPPossible {
-            return "System PiP 준비됨"
+            return "준비됨"
         } else {
             return "대기 중"
         }
     }
     
-    private var systemPipStatusColor: Color {
-        if pipManager.isPiPActive {
-            return .green
-        } else if pipManager.isPiPPossible {
-            return .blue
-        } else {
-            return .gray
-        }
-    }
-    
-    private func getSystemPiPButtonIcon() -> String {
+    private func getPiPButtonIcon() -> String {
         if pipManager.isPiPActive {
             return "pip.exit"
         } else {
@@ -784,7 +705,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Enhanced Stream Row View with System PiP Support
+// MARK: - Enhanced Stream Row View
 struct StreamRowView: View {
     let stream: RTSPStream
     let action: () -> Void
@@ -818,18 +739,11 @@ struct StreamRowView: View {
                             .cornerRadius(3)
                             .foregroundColor(.blue)
                         
-                        // System PiP 지원 표시
+                        // Enhanced PiP 지원 표시
                         if PictureInPictureManager.shared.isPiPSupported {
-                            HStack(spacing: 2) {
-                                Image(systemName: "pip")
-                                Text("System")
-                            }
-                            .font(.caption2)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(3)
-                            .foregroundColor(.green)
+                            Image(systemName: "pip")
+                                .font(.caption2)
+                                .foregroundColor(.green)
                         }
                     }
                 }
