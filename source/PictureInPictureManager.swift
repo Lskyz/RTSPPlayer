@@ -1,4 +1,3 @@
-// MARK: - PictureInPictureManager.swift (Fixed Version)
 import AVKit
 import UIKit
 import Combine
@@ -6,6 +5,7 @@ import VLCKitSPM
 import VideoToolbox
 import CoreMedia
 import CoreVideo
+import CoreImage
 
 // MARK: - PiP Manager Protocol
 protocol PictureInPictureManagerDelegate: AnyObject {
@@ -16,7 +16,7 @@ protocol PictureInPictureManagerDelegate: AnyObject {
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
 }
 
-// MARK: - Enhanced PiP Manager with Direct VLC Stream
+// MARK: - Enhanced PiP Manager with Direct VLC Stream Processing
 class PictureInPictureManager: NSObject, ObservableObject {
     
     // Singleton
@@ -32,13 +32,14 @@ class PictureInPictureManager: NSObject, ObservableObject {
     private var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer?
     private var displayLayerView: UIView?
     
-    // VLC Components - CRITICAL FIX
+    // VLC Components
     private var vlcPlayer: VLCMediaPlayer?
+    private var vlcVideoOutput: VLCVideoOutput?
     private var containerView: UIView?
     
     // Direct Video Processing
-    private var videoContext: UnsafeMutableRawPointer?
-    private var currentPixelBuffer: CVPixelBuffer?
+    private var pixelBufferPool: CVPixelBufferPool?
+    private var formatDescription: CMVideoFormatDescription?
     
     // Delegate
     weak var delegate: PictureInPictureManagerDelegate?
@@ -46,39 +47,77 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // Cancellables
     private var cancellables = Set<AnyCancellable>()
     
-    // Frame Processing Queue
-    private let videoQueue = DispatchQueue(label: "com.rtspplayer.video", qos: .userInteractive)
+    // Processing Queues
+    private let videoProcessingQueue = DispatchQueue(label: "com.rtspplayer.video.processing", qos: .userInteractive)
+    private let renderQueue = DispatchQueue(label: "com.rtspplayer.render", qos: .userInteractive)
     
-    // Timing
+    // Timing Management
     private var timebase: CMTimebase?
     private var frameCount: Int64 = 0
-    private let frameDuration = CMTime(value: 1, timescale: 30) // 30 FPS
+    private var startTime: CMTime = .zero
+    private let targetFrameRate: Int32 = 30
+    
+    // Video Properties
+    private var videoWidth: Int = 1920
+    private var videoHeight: Int = 1080
+    private var firstFrameReceived = false
     
     override init() {
         super.init()
         checkPiPSupport()
         setupAudioSession()
+        setupPixelBufferPool()
     }
     
     // MARK: - Setup
     
     private func checkPiPSupport() {
         isPiPSupported = AVPictureInPictureController.isPictureInPictureSupported()
-        print("System PiP Support: \(isPiPSupported)")
+        print("PiP Support: \(isPiPSupported)")
     }
     
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try audioSession.setCategory(.playback, mode: .moviePlaybook, options: [.mixWithOthers, .allowAirPlay])
             try audioSession.setActive(true)
-            print("Audio session configured for System PiP")
+            print("Audio session configured for PiP")
         } catch {
             print("Failed to setup audio session: \(error)")
         }
     }
     
-    // MARK: - CRITICAL FIX: Direct VLC Video Callback Setup
+    private func setupPixelBufferPool() {
+        let pixelBufferAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            kCVPixelBufferWidthKey as String: videoWidth,
+            kCVPixelBufferHeightKey as String: videoHeight,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+            kCVPixelBufferBytesPerRowAlignmentKey as String: 16
+        ]
+        
+        let poolAttributes: [String: Any] = [
+            kCVPixelBufferPoolMinimumBufferCountKey as String: 5,
+            kCVPixelBufferPoolMaximumBufferAgeKey as String: 0
+        ]
+        
+        var pool: CVPixelBufferPool?
+        let status = CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelBufferAttributes as CFDictionary,
+            &pool
+        )
+        
+        if status == kCVReturnSuccess {
+            pixelBufferPool = pool
+            print("Pixel buffer pool created successfully")
+        } else {
+            print("Failed to create pixel buffer pool: \(status)")
+        }
+    }
+    
+    // MARK: - Direct VLC Integration
     
     func connectToVLCPlayer(_ vlcPlayer: VLCMediaPlayer, containerView: UIView) {
         cleanup()
@@ -89,21 +128,23 @@ class PictureInPictureManager: NSObject, ObservableObject {
         // Setup display layer
         setupDisplayLayer(in: containerView)
         
-        // CRITICAL: Setup direct VLC video callbacks
-        setupVLCVideoCallbacks()
+        // CRITICAL: Setup direct VLC video output
+        setupDirectVLCVideoOutput()
         
         // Setup PiP controller
         if #available(iOS 15.0, *) {
             setupModernPiPController()
         }
         
-        print("VLC Player connected with direct video callbacks")
+        print("Connected to VLC with direct video output")
     }
     
     private func setupDisplayLayer(in containerView: UIView) {
-        // Create sample buffer display layer
         sampleBufferDisplayLayer = AVSampleBufferDisplayLayer()
-        guard let displayLayer = sampleBufferDisplayLayer else { return }
+        guard let displayLayer = sampleBufferDisplayLayer else {
+            print("Failed to create sample buffer display layer")
+            return
+        }
         
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
@@ -114,17 +155,17 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayerView?.backgroundColor = .clear
         displayLayerView?.layer.addSublayer(displayLayer)
         displayLayerView?.isHidden = false
-        displayLayerView?.alpha = 0.01 // Almost invisible but detectable by system
+        displayLayerView?.alpha = 0.01 // Keep visible for system PiP
         
         containerView.addSubview(displayLayerView!)
         
         // Setup timebase
-        setupTimebase()
+        setupTimebaseWithHostClock()
         
-        print("Display layer configured for System PiP")
+        print("Display layer configured for system PiP")
     }
     
-    private func setupTimebase() {
+    private func setupTimebaseWithHostClock() {
         guard let displayLayer = sampleBufferDisplayLayer else { return }
         
         var timebase: CMTimebase?
@@ -137,25 +178,48 @@ class PictureInPictureManager: NSObject, ObservableObject {
         if status == noErr, let tb = timebase {
             self.timebase = tb
             displayLayer.controlTimebase = tb
+            
             CMTimebaseSetTime(tb, time: .zero)
             CMTimebaseSetRate(tb, rate: 1.0)
+            
+            startTime = CMClockGetTime(CMClockGetHostTimeClock())
+            
             print("Timebase configured with Host Clock")
         }
     }
     
-    // MARK: - CRITICAL: Direct VLC Video Callbacks
-    
-    private func setupVLCVideoCallbacks() {
+    private func setupDirectVLCVideoOutput() {
         guard let vlcPlayer = vlcPlayer else { return }
         
-        // Create video context
-        videoContext = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        // CRITICAL: Create custom VLC video output
+        vlcVideoOutput = VLCVideoOutput()
+        vlcVideoOutput?.delegate = self
         
-        // Set video callbacks - CRITICAL for direct stream access
-        vlc_set_video_format_callbacks(vlcPlayer, video_format_cb, nil)
-        vlc_set_video_callbacks(vlcPlayer, video_lock_cb, video_unlock_cb, video_display_cb, videoContext)
+        // Configure VLC for direct video callback
+        vlcPlayer.setVideoCallbacks(
+            lock: { [weak self] (opaque, planes) -> UnsafeMutableRawPointer? in
+                return self?.videoLockCallback(opaque: opaque, planes: planes)
+            },
+            unlock: { [weak self] (opaque, picture, planes) in
+                self?.videoUnlockCallback(opaque: opaque, picture: picture, planes: planes)
+            },
+            display: { [weak self] (opaque, picture) in
+                self?.videoDisplayCallback(opaque: opaque, picture: picture)
+            },
+            opaque: Unmanaged.passUnretained(self).toOpaque()
+        )
         
-        print("VLC video callbacks configured for direct stream access")
+        // Set video format callback
+        vlcPlayer.setVideoFormatCallbacks(
+            setup: { [weak self] (opaque, chroma, width, height, pitches, lines) -> UnsafeMutableRawPointer? in
+                return self?.videoSetupCallback(opaque: opaque, chroma: chroma, width: width, height: height, pitches: pitches, lines: lines)
+            },
+            cleanup: { [weak self] (opaque) in
+                self?.videoCleanupCallback(opaque: opaque)
+            }
+        )
+        
+        print("Direct VLC video output configured")
     }
     
     @available(iOS 15.0, *)
@@ -170,7 +234,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
         pipController = AVPictureInPictureController(contentSource: contentSource)
         configurePiPController()
         
-        print("Modern PiP controller configured with direct stream")
+        print("Modern PiP controller configured")
     }
     
     private func configurePiPController() {
@@ -205,7 +269,175 @@ class PictureInPictureManager: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - Public Methods
+    // MARK: - VLC Video Callbacks
+    
+    private func videoSetupCallback(opaque: UnsafeMutableRawPointer?, 
+                                   chroma: UnsafeMutablePointer<vlc_fourcc_t>?, 
+                                   width: UnsafeMutablePointer<UInt32>?, 
+                                   height: UnsafeMutablePointer<UInt32>?, 
+                                   pitches: UnsafeMutablePointer<UInt32>?, 
+                                   lines: UnsafeMutablePointer<UInt32>?) -> UnsafeMutableRawPointer? {
+        
+        guard let width = width, let height = height else { return nil }
+        
+        videoWidth = Int(width.pointee)
+        videoHeight = Int(height.pointee)
+        
+        print("Video format setup: \(videoWidth)x\(videoHeight)")
+        
+        // Force I420 format for better compatibility
+        chroma?.pointee = VLC_CODEC_I420
+        
+        // Update pixel buffer pool with new dimensions
+        setupPixelBufferPool()
+        
+        // Create format description
+        createFormatDescription()
+        
+        return Unmanaged.passUnretained(self).toOpaque()
+    }
+    
+    private func videoCleanupCallback(opaque: UnsafeMutableRawPointer?) {
+        print("Video format cleanup")
+    }
+    
+    private func videoLockCallback(opaque: UnsafeMutableRawPointer?, planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> UnsafeMutableRawPointer? {
+        // Allocate frame buffer
+        guard let pool = pixelBufferPool else { return nil }
+        
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        
+        if status == kCVReturnSuccess, let buffer = pixelBuffer {
+            CVPixelBufferLockBaseAddress(buffer, [])
+            
+            // Set up planes for I420 format
+            if let planes = planes {
+                planes[0] = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) // Y plane
+                planes[1] = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) // U plane  
+                planes[2] = CVPixelBufferGetBaseAddressOfPlane(buffer, 2) // V plane
+            }
+            
+            return Unmanaged.passRetained(buffer).toOpaque()
+        }
+        
+        return nil
+    }
+    
+    private func videoUnlockCallback(opaque: UnsafeMutableRawPointer?, picture: UnsafeMutableRawPointer?, planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?) {
+        guard let picture = picture else { return }
+        
+        let pixelBuffer = Unmanaged<CVPixelBuffer>.fromOpaque(picture).takeRetainedValue()
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+        
+        // Process frame on background queue
+        videoProcessingQueue.async { [weak self] in
+            self?.processVideoFrame(pixelBuffer)
+        }
+    }
+    
+    private func videoDisplayCallback(opaque: UnsafeMutableRawPointer?, picture: UnsafeMutableRawPointer?) {
+        // Frame is ready for display - handled in unlock callback
+    }
+    
+    // MARK: - Video Frame Processing
+    
+    private func createFormatDescription() {
+        var formatDescription: CMVideoFormatDescription?
+        let status = CMVideoFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            codecType: kCMVideoCodecType_420YpCbCr8BiPlanarVideoRange,
+            width: Int32(videoWidth),
+            height: Int32(videoHeight),
+            extensions: nil,
+            formatDescriptionOut: &formatDescription
+        )
+        
+        if status == noErr {
+            self.formatDescription = formatDescription
+            print("Format description created: \(videoWidth)x\(videoHeight)")
+        }
+    }
+    
+    private func processVideoFrame(_ pixelBuffer: CVPixelBuffer) {
+        guard let formatDesc = formatDescription else { return }
+        
+        // Create sample buffer with proper timing
+        let currentTime = CMClockGetTime(CMClockGetHostTimeClock())
+        let presentationTime = CMTimeSubtract(currentTime, startTime)
+        let duration = CMTime(value: 1, timescale: targetFrameRate)
+        
+        var timingInfo = CMSampleTimingInfo(
+            duration: duration,
+            presentationTimeStamp: presentationTime,
+            decodeTimeStamp: .invalid
+        )
+        
+        var sampleBuffer: CMSampleBuffer?
+        let status = CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescription: formatDesc,
+            sampleTiming: &timingInfo,
+            sampleBufferOut: &sampleBuffer
+        )
+        
+        if status == noErr, let buffer = sampleBuffer {
+            // Mark for immediate display
+            attachDisplayAttributes(to: buffer)
+            
+            // Send to display layer
+            renderQueue.async { [weak self] in
+                self?.renderSampleBuffer(buffer)
+            }
+            
+            frameCount += 1
+            
+            if !firstFrameReceived {
+                firstFrameReceived = true
+                print("First direct video frame received from VLC")
+            }
+        }
+    }
+    
+    private func attachDisplayAttributes(to sampleBuffer: CMSampleBuffer) {
+        guard let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
+              CFArrayGetCount(attachmentsArray) > 0 else { return }
+        
+        let attachments = unsafeBitCast(CFArrayGetValueAtIndex(attachmentsArray, 0), to: CFMutableDictionary.self)
+        
+        CFDictionarySetValue(
+            attachments,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+        )
+        
+        CFDictionarySetValue(
+            attachments,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_IsDependedOnByOthers).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanFalse).toOpaque()
+        )
+    }
+    
+    private func renderSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard let displayLayer = sampleBufferDisplayLayer else { return }
+        
+        if displayLayer.status == .failed {
+            print("Display layer failed, flushing...")
+            displayLayer.flush()
+            return
+        }
+        
+        if displayLayer.isReadyForMoreMediaData {
+            displayLayer.enqueue(sampleBuffer)
+            
+            if frameCount % 90 == 0 {
+                print("System PiP: \(frameCount) frames processed")
+            }
+        }
+    }
+    
+    // MARK: - Public Interface
     
     func startPiP() {
         guard isPiPSupported, isPiPPossible else {
@@ -214,17 +446,46 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
         
         frameCount = 0
+        firstFrameReceived = false
+        startTime = CMClockGetTime(CMClockGetHostTimeClock())
         
-        // Start PiP with delay to ensure video is ready
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.pipController?.startPictureInPicture()
-            print("Starting System PiP with direct VLC stream")
+        // Wait for first frame then start PiP
+        waitForFirstFrameAndStartPiP()
+    }
+    
+    private func waitForFirstFrameAndStartPiP() {
+        let checkInterval: TimeInterval = 0.1
+        let maxWaitTime: TimeInterval = 5.0
+        var elapsedTime: TimeInterval = 0
+        
+        let timer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            
+            elapsedTime += checkInterval
+            
+            if self.firstFrameReceived && (self.sampleBufferDisplayLayer?.isReadyForMoreMediaData == true) {
+                timer.invalidate()
+                print("First direct frame received, starting system PiP")
+                self.pipController?.startPictureInPicture()
+            } else if elapsedTime >= maxWaitTime {
+                timer.invalidate()
+                print("Timeout waiting for direct frame, starting PiP anyway")
+                self.pipController?.startPictureInPicture()
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxWaitTime + 0.1) {
+            timer.invalidate()
         }
     }
     
     func stopPiP() {
         guard isPiPActive else { return }
         pipController?.stopPictureInPicture()
+        print("Stopping system PiP")
     }
     
     func togglePiP() {
@@ -235,87 +496,10 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Video Processing Methods
-    
-    private func processVideoFrame(pixelBuffer: CVPixelBuffer) {
-        guard let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.enqueueVideoFrame(sampleBuffer)
-        }
-    }
-    
-    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
-        var formatDescription: CMVideoFormatDescription?
-        let status = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &formatDescription
-        )
-        
-        guard status == noErr, let format = formatDescription else { return nil }
-        
-        // Calculate presentation time
-        let presentationTime = CMTime(value: frameCount, timescale: 30)
-        frameCount += 1
-        
-        var timingInfo = CMSampleTimingInfo(
-            duration: frameDuration,
-            presentationTimeStamp: presentationTime,
-            decodeTimeStamp: .invalid
-        )
-        
-        var sampleBuffer: CMSampleBuffer?
-        let result = CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescription: format,
-            sampleTiming: &timingInfo,
-            sampleBufferOut: &sampleBuffer
-        )
-        
-        guard result == noErr else { return nil }
-        
-        // Mark for immediate display
-        if let sampleBuffer = sampleBuffer,
-           let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true) {
-            if CFArrayGetCount(attachments) > 0 {
-                let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-                CFDictionarySetValue(
-                    dict,
-                    Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                    Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
-                )
-            }
-        }
-        
-        return sampleBuffer
-    }
-    
-    private func enqueueVideoFrame(_ sampleBuffer: CMSampleBuffer) {
-        guard let displayLayer = sampleBufferDisplayLayer else { return }
-        
-        if displayLayer.status == .failed {
-            displayLayer.flush()
-            return
-        }
-        
-        if displayLayer.isReadyForMoreMediaData {
-            displayLayer.enqueue(sampleBuffer)
-            
-            if frameCount % 60 == 0 {
-                print("System PiP: \(frameCount) frames processed")
-            }
-        }
-    }
-    
     // MARK: - Cleanup
     
     private func cleanup() {
-        if let vlcPlayer = vlcPlayer {
-            // Reset VLC video callbacks
-            vlc_set_video_callbacks(vlcPlayer, nil, nil, nil, nil)
-        }
+        vlcVideoOutput = nil
         
         pipController?.delegate = nil
         pipController = nil
@@ -327,14 +511,14 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayerView?.removeFromSuperview()
         displayLayerView = nil
         
-        currentPixelBuffer = nil
-        videoContext = nil
+        formatDescription = nil
         timebase = nil
         frameCount = 0
+        firstFrameReceived = false
         
         cancellables.removeAll()
         
-        print("PiP Manager cleanup completed")
+        print("Cleanup completed")
     }
     
     deinit {
@@ -344,138 +528,44 @@ class PictureInPictureManager: NSObject, ObservableObject {
     // MARK: - Properties
     
     var canStartPiP: Bool {
-        return isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
+        let canStart = isPiPSupported && isPiPPossible && !isPiPActive && (vlcPlayer?.isPlaying ?? false)
+        return canStart
     }
     
     var pipStatus: String {
         if !isPiPSupported {
             return "Not Supported"
         } else if isPiPActive {
-            return "System PiP Active"
+            return "System PiP Active (Direct Stream)"
         } else if isPiPPossible {
-            return "Ready for System PiP"
+            return "Ready for System PiP (Direct)"
+        } else if vlcPlayer?.isPlaying ?? false {
+            return "Preparing Direct Stream"
         } else {
-            return "Preparing..."
+            return "Inactive"
         }
     }
 }
 
-// MARK: - CRITICAL: VLC Video Callback Functions
-
-private func video_format_cb(
-    _ opaque: UnsafeMutableRawPointer?,
-    _ chroma: UnsafeMutablePointer<UInt32>?,
-    _ width: UnsafeMutablePointer<UInt32>?,
-    _ height: UnsafeMutablePointer<UInt32>?,
-    _ pitches: UnsafeMutablePointer<UInt32>?,
-    _ lines: UnsafeMutablePointer<UInt32>?
-) -> UInt32 {
-    
-    // Set preferred format for iOS
-    chroma?.pointee = VLC_CODEC_RGB32
-    
-    print("VLC Video Format: \(width?.pointee ?? 0)x\(height?.pointee ?? 0)")
-    return 1 // Success
+// MARK: - VLC Video Output Helper
+class VLCVideoOutput: NSObject {
+    weak var delegate: VLCVideoOutputDelegate?
 }
 
-private func video_lock_cb(
-    _ opaque: UnsafeMutableRawPointer?,
-    _ planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
-) -> UnsafeMutableRawPointer? {
-    
-    guard let opaque = opaque else { return nil }
-    
-    let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
-    
-    // Create pixel buffer if needed
-    if manager.currentPixelBuffer == nil {
-        let attrs: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-        ]
-        
-        var pixelBuffer: CVPixelBuffer?
-        CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            1920, 1080, // Default size, will be adjusted
-            kCVPixelFormatType_32BGRA,
-            attrs as CFDictionary,
-            &pixelBuffer
-        )
-        
-        manager.currentPixelBuffer = pixelBuffer
-    }
-    
-    guard let pixelBuffer = manager.currentPixelBuffer else { return nil }
-    
-    CVPixelBufferLockBaseAddress(pixelBuffer, [])
-    let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)
-    
-    planes?.pointee = baseAddress
-    
-    return baseAddress
+protocol VLCVideoOutputDelegate: AnyObject {
+    func didReceiveVideoFrame(_ pixelBuffer: CVPixelBuffer)
 }
-
-private func video_unlock_cb(
-    _ opaque: UnsafeMutableRawPointer?,
-    _ picture: UnsafeMutableRawPointer?,
-    _ planes: UnsafePointer<UnsafeMutableRawPointer?>?
-) {
-    
-    guard let opaque = opaque else { return }
-    
-    let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
-    
-    if let pixelBuffer = manager.currentPixelBuffer {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-    }
-}
-
-private func video_display_cb(
-    _ opaque: UnsafeMutableRawPointer?,
-    _ picture: UnsafeMutableRawPointer?
-) {
-    
-    guard let opaque = opaque else { return }
-    
-    let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
-    
-    if let pixelBuffer = manager.currentPixelBuffer {
-        manager.processVideoFrame(pixelBuffer: pixelBuffer)
-    }
-}
-
-// MARK: - VLC Constants
-private let VLC_CODEC_RGB32: UInt32 = 0x20424752 // 'RGX '
-
-// MARK: - VLC C Functions Declaration
-@_silgen_name("vlc_set_video_format_callbacks")
-private func vlc_set_video_format_callbacks(
-    _ player: VLCMediaPlayer,
-    _ setup: (@convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<UInt32>?, UnsafeMutablePointer<UInt32>?, UnsafeMutablePointer<UInt32>?, UnsafeMutablePointer<UInt32>?, UnsafeMutablePointer<UInt32>?) -> UInt32)?,
-    _ cleanup: (@convention(c) (UnsafeMutableRawPointer?) -> Void)?
-)
-
-@_silgen_name("vlc_set_video_callbacks")
-private func vlc_set_video_callbacks(
-    _ player: VLCMediaPlayer,
-    _ lock: (@convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> UnsafeMutableRawPointer?)?,
-    _ unlock: (@convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafePointer<UnsafeMutableRawPointer?>?) -> Void)?,
-    _ display: (@convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void)?,
-    _ opaque: UnsafeMutableRawPointer?
-)
 
 // MARK: - AVPictureInPictureControllerDelegate
 extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("System PiP will start with direct VLC stream")
+        print("System PiP will start (direct stream)")
         delegate?.pipWillStart()
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("System PiP started successfully with direct stream!")
+        print("System PiP did start - Direct stream active!")
         isPiPActive = true
         delegate?.pipDidStart()
     }
@@ -486,7 +576,7 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("System PiP stopped")
+        print("System PiP did stop")
         isPiPActive = false
         delegate?.pipDidStop()
     }
@@ -526,7 +616,7 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                    didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
-        print("System PiP render size: \(newRenderSize.width)x\(newRenderSize.height)")
+        print("System PiP render size changed: \(newRenderSize.width)x\(newRenderSize.height)")
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
