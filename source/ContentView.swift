@@ -185,7 +185,13 @@ struct ContentView: View {
                         isPlaying: $viewModel.isPlaying,
                         username: viewModel.selectedStream?.username,
                         password: viewModel.selectedStream?.password,
-                        networkCaching: viewModel.networkCaching
+                        networkCaching: viewModel.networkCaching,
+                        onStreamInfo: { info in
+                            currentStreamInfo = info
+                        },
+                        onPiPStatus: { isActive in
+                            isPiPModeActive = isActive
+                        }
                     )
                     .frame(
                         width: geometry.size.width,
@@ -196,12 +202,6 @@ struct ContentView: View {
                     .onTapGesture(count: 2) {
                         // 더블 탭으로 PiP 토글
                         pipManager.togglePiP()
-                    }
-                    .onStreamInfoUpdate { info in
-                        currentStreamInfo = info
-                    }
-                    .onPiPStatusUpdate { isActive in
-                        isPiPModeActive = isActive
                     }
                     .onAppear {
                         playerSize = CGSize(
