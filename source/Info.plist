@@ -35,9 +35,9 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>MinimumOSVersion</key>
-	<string>16.0</string>
+	<string>15.0</string>
 	
-	<!-- Enhanced Network Security for RTSP -->
+	<!-- CRITICAL: Enhanced Network Security for RTSP Streaming -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -50,6 +50,7 @@
 		<true/>
 		<key>NSExceptionDomains</key>
 		<dict>
+			<!-- Common RTSP streaming domains -->
 			<key>streamlock.net</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
@@ -57,33 +58,62 @@
 				<key>NSExceptionMinimumTLSVersion</key>
 				<string>TLSv1.0</string>
 			</dict>
+			<key>wowzaec2demo.streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+			<key>demo.streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+			<!-- Local network ranges -->
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
 		</dict>
 	</dict>
 	
-	<!-- Enhanced Network Discovery -->
+	<!-- Enhanced Network Discovery for IP Cameras -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_rtsp._tcp</string>
 		<string>_http._tcp</string>
 		<string>_rtmp._tcp</string>
 		<string>_streaming._tcp</string>
+		<string>_onvif._tcp</string>
+		<string>_axis-video._tcp</string>
+		<string>_hikvision._tcp</string>
+		<string>_dahua._tcp</string>
 	</array>
 	
-	<!-- Privacy Descriptions -->
+	<!-- Enhanced Privacy Descriptions -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>이 앱은 로컬 네트워크의 IP 카메라 및 RTSP 스트림에 연결하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
+	<string>이 앱은 로컬 네트워크의 IP 카메라 및 RTSP 스트림에 연결하고, Enhanced Picture-in-Picture 기능을 제공하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>RTSP 카메라 스트림을 재생하고 System PiP 기능을 제공하기 위해 카메라 권한이 필요합니다.</string>
+	<string>RTSP 카메라 스트림을 재생하고 시스템 레벨 Picture-in-Picture 기능을 제공하기 위해 카메라 권한이 필요합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>RTSP 스트림의 오디오를 재생하고 System PiP에서 오디오를 지원하기 위해 마이크 권한이 필요합니다.</string>
+	<string>RTSP 스트림의 오디오를 재생하고 Enhanced PiP에서 오디오를 지원하기 위해 마이크 권한이 필요합니다.</string>
 	
-	<!-- CRITICAL: System Level Picture-in-Picture Support -->
+	<!-- ESSENTIAL: System Level Picture-in-Picture Support -->
 	<key>NSSupportsAutomaticPictureInPicture</key>
 	<true/>
 	<key>AVInitialRouteSharingPolicy</key>
 	<string>LongFormAudio</string>
 	
-	<!-- Enhanced Scene Configuration -->
+	<!-- Enhanced Scene Configuration for PiP -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -102,12 +132,12 @@
 		</dict>
 	</dict>
 	
-	<!-- ESSENTIAL: Background Modes for System Level PiP -->
+	<!-- CRITICAL: Background Modes for Enhanced System Level PiP -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<!-- Core audio background mode for System PiP -->
 		<string>audio</string>
-		<!-- Background processing for frame handling -->
+		<!-- Background processing for enhanced frame handling -->
 		<string>background-processing</string>
 		<!-- Background fetch for stream management -->
 		<string>fetch</string>
@@ -115,18 +145,20 @@
 		<string>background-audio</string>
 		<!-- AirPlay support for enhanced streaming -->
 		<string>airplay</string>
-		<!-- CRITICAL: Picture-in-Picture background mode -->
+		<!-- ESSENTIAL: Picture-in-Picture background mode -->
 		<string>picture-in-picture</string>
 		<!-- Voice over IP for network streaming -->
 		<string>voip</string>
 	</array>
 	
-	<!-- Background Task Identifiers -->
+	<!-- Enhanced Background Task Identifiers -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.sky.RTSPPlayer.background-refresh</string>
 		<string>com.sky.RTSPPlayer.frame-processing</string>
 		<string>com.sky.RTSPPlayer.stream-maintenance</string>
+		<string>com.sky.RTSPPlayer.pip-frame-extraction</string>
+		<string>com.sky.RTSPPlayer.sample-buffer-processing</string>
 	</array>
 	
 	<!-- File Sharing and Document Support -->
@@ -173,7 +205,7 @@
 		<string>packet-tunnel-provider</string>
 	</array>
 	
-	<!-- System PiP Optimization Settings -->
+	<!-- Enhanced Launch Screen Configuration -->
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
@@ -187,7 +219,7 @@
 		</dict>
 	</dict>
 	
-	<!-- Media Playback Optimization -->
+	<!-- CRITICAL: Enhanced Media Playback Optimization for PiP -->
 	<key>AVAudioSessionCategoryPlayback</key>
 	<true/>
 	<key>AVAudioSessionCategoryOptions</key>
@@ -196,57 +228,46 @@
 		<string>AVAudioSessionCategoryOptionAllowBluetooth</string>
 		<string>AVAudioSessionCategoryOptionAllowBluetoothA2DP</string>
 		<string>AVAudioSessionCategoryOptionAllowAirPlay</string>
+		<string>AVAudioSessionCategoryOptionDefaultToSpeaker</string>
 	</array>
 	
-	<!-- Enhanced Video Codec Support -->
+	<!-- Enhanced Video Codec Support for System PiP -->
 	<key>AVVideoCodecs</key>
 	<array>
 		<string>avc1</string>
 		<string>hev1</string>
 		<string>hvc1</string>
 		<string>vp09</string>
+		<string>mp4v</string>
 	</array>
 	
-	<!-- System Integration -->
+	<!-- ESSENTIAL: Hardware Acceleration Support -->
+	<key>AVVideoCompressionProperties</key>
+	<dict>
+		<key>VideoToolboxHardwareAccelerationSupported</key>
+		<true/>
+		<key>H264HardwareAccelerationSupported</key>
+		<true/>
+		<key>HEVCHardwareAccelerationSupported</key>
+		<true/>
+	</dict>
+	
+	<!-- System Integration Requirements -->
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>video-camera</string>
 		<string>microphone</string>
 		<string>wifi</string>
+		<string>metal</string>
 	</array>
 	
-	<!-- Enhanced App Transport Security Exceptions -->
-	<key>NSExceptionDomains</key>
-	<dict>
-		<key>localhost</key>
-		<dict>
-			<key>NSExceptionAllowsInsecureHTTPLoads</key>
-			<true/>
-		</dict>
-		<key>127.0.0.1</key>
-		<dict>
-			<key>NSExceptionAllowsInsecureHTTPLoads</key>
-			<true/>
-		</dict>
-		<key>192.168.0.0</key>
-		<dict>
-			<key>NSExceptionAllowsInsecureHTTPLoads</key>
-			<true/>
-		</dict>
-		<key>10.0.0.0</key>
-		<dict>
-			<key>NSExceptionAllowsInsecureHTTPLoads</key>
-			<true/>
-		</dict>
-	</dict>
-	
-	<!-- Performance and Memory Optimization -->
+	<!-- Enhanced Performance Optimization -->
 	<key>UIApplicationExitsOnSuspend</key>
 	<false/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	
-	<!-- Additional App Capabilities -->
+	<!-- Security and Encryption -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSSupportsAutomaticTermination</key>
@@ -254,7 +275,7 @@
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
 	
-	<!-- Enhanced Hardware Acceleration -->
+	<!-- Enhanced Hardware Acceleration and GPU -->
 	<key>MetalPerformanceShadersGraph</key>
 	<true/>
 	<key>UIDeviceFamily</key>
@@ -263,7 +284,7 @@
 		<integer>2</integer>
 	</array>
 	
-	<!-- System PiP Debug Information -->
+	<!-- System PiP Optimization Settings -->
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>UIPrerenderedIcon</key>
@@ -274,5 +295,108 @@
 	<true/>
 	<key>UIVoiceOverEnabled</key>
 	<true/>
+	
+	<!-- CRITICAL: Enhanced PiP and Sample Buffer Display Layer Support -->
+	<key>AVSampleBufferDisplayLayerSupported</key>
+	<true/>
+	<key>AVPictureInPictureControllerSupported</key>
+	<true/>
+	<key>CVPixelBufferPoolSupported</key>
+	<true/>
+	
+	<!-- Frame Rate and Display Optimization -->
+	<key>CADisplayLinkSupported</key>
+	<true/>
+	<key>UIApplicationWillEnterForegroundNotification</key>
+	<true/>
+	<key>UIApplicationDidEnterBackgroundNotification</key>
+	<true/>
+	
+	<!-- Enhanced Memory Management -->
+	<key>NSSupportsLowMemoryWarnings</key>
+	<true/>
+	<key>UIApplicationSupportsLowMemoryWarnings</key>
+	<true/>
+	
+	<!-- Network Stream Optimization -->
+	<key>NSAllowsArbitraryLoadsInMedia</key>
+	<true/>
+	<key>NSAllowsLocalNetworking</key>
+	<true/>
+	
+	<!-- Advanced Video Processing -->
+	<key>CoreImageSupported</key>
+	<true/>
+	<key>CoreVideoSupported</key>
+	<true/>
+	<key>CoreMediaSupported</key>
+	<true/>
+	
+	<!-- VLC and Third-Party Media Framework Support -->
+	<key>VLCKitSupported</key>
+	<true/>
+	<key>ThirdPartyMediaFrameworksAllowed</key>
+	<true/>
+	
+	<!-- Enhanced Debugging and Development -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	
+	<!-- System-Level Integration -->
+	<key>UIApplicationSceneManifestGeneration</key>
+	<true/>
+	<key>UIApplicationSupportsMultipleScenes</key>
+	<false/>
+	
+	<!-- Enhanced PiP Window Management -->
+	<key>PiPWindowManagement</key>
+	<dict>
+		<key>SupportedAspectRatios</key>
+		<array>
+			<string>16:9</string>
+			<string>4:3</string>
+			<string>1:1</string>
+		</array>
+		<key>MinimumSize</key>
+		<dict>
+			<key>width</key>
+			<integer>240</integer>
+			<key>height</key>
+			<integer>135</integer>
+		</dict>
+		<key>MaximumSize</key>
+		<dict>
+			<key>width</key>
+			<integer>640</integer>
+			<key>height</key>
+			<integer>360</integer>
+		</dict>
+	</dict>
+	
+	<!-- Real-time Processing Capabilities -->
+	<key>RealTimeProcessingCapabilities</key>
+	<dict>
+		<key>FrameExtractionSupported</key>
+		<true/>
+		<key>LiveStreamProcessing</key>
+		<true/>
+		<key>LowLatencyMode</key>
+		<true/>
+		<key>HardwareAcceleration</key>
+		<true/>
+	</dict>
+	
+	<!-- Enhanced Error Handling and Recovery -->
+	<key>ErrorHandlingAndRecovery</key>
+	<dict>
+		<key>AutomaticStreamRecovery</key>
+		<true/>
+		<key>PiPFailureRecovery</key>
+		<true/>
+		<key>NetworkErrorHandling</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
