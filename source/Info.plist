@@ -2,143 +2,401 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- 기본 앱 정보 -->
-    <key>CFBundleDevelopmentRegion</key>
-    <string>$(DEVELOPMENT_LANGUAGE)</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    
-    <!-- 백그라운드 모드 설정 (PiP를 위해 필요) -->
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>audio</string>
-        <string>fetch</string>
-        <string>remote-notification</string>
-    </array>
-    
-    <!-- Picture in Picture 지원 -->
-    <key>NSSupportsAutomaticPictureInPicture</key>
-    <true/>
-    
-    <!-- 네트워크 권한 설정 (RTSP 스트리밍을 위해) -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <!-- HTTP 트래픽 허용 (RTSP는 기본적으로 암호화되지 않음) -->
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-        <key>NSAllowsArbitraryLoadsForMedia</key>
-        <true/>
-        <key>NSAllowsArbitraryLoadsInWebContent</key>
-        <true/>
-        <!-- 로컬 네트워크 접근 허용 -->
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-    </dict>
-    
-    <!-- 로컬 네트워크 사용 권한 (iOS 14+) -->
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>이 앱은 로컬 네트워크의 IP 카메라에 연결하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
-    
-    <!-- Bonjour 서비스 (선택사항, 자동 장치 검색용) -->
-    <key>NSBonjourServices</key>
-    <array>
-        <string>_rtsp._tcp</string>
-        <string>_http._tcp</string>
-    </array>
-    
-    <!-- 멀티캐스트 권한 (iOS 14.5+, RTSP 멀티캐스트 스트림용) -->
-    <key>com.apple.developer.networking.multicast</key>
-    <true/>
-    
-    <!-- 앱 방향 설정 -->
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-    </array>
-    
-    <!-- iPad 방향 설정 -->
-    <key>UISupportedInterfaceOrientations~ipad</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-    
-    <!-- 화면 자동 잠금 방지 (선택사항) -->
-    <key>UIRequiresFullScreen</key>
-    <false/>
-    
-    <!-- SwiftUI 앱 설정 -->
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
-        <key>UISceneConfigurations</key>
-        <dict>
-            <key>UIWindowSceneSessionRoleApplication</key>
-            <array>
-                <dict>
-                    <key>UISceneConfigurationName</key>
-                    <string>Default Configuration</string>
-                    <key>UISceneDelegateClassName</key>
-                    <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
-                </dict>
-            </array>
-        </dict>
-    </dict>
-    
-    <!-- 상태바 스타일 정적 설정 -->
-    <key>UIStatusBarStyle</key>
-    <string>UIStatusBarStyleLightContent</string>
-    <key>UIViewControllerBasedStatusBarAppearance</key>
-    <false/>
-    
-    <!-- 앱 아이콘 -->
-    <key>CFBundleIcons</key>
-    <dict>
-        <key>CFBundlePrimaryIcon</key>
-        <dict>
-            <key>CFBundleIconFiles</key>
-            <array>
-                <string>AppIcon</string>
-            </array>
-        </dict>
-    </dict>
-    
-    <!-- 런치 스크린 -->
-    <key>UILaunchStoryboardName</key>
-    <string>LaunchScreen</string>
-    
-    <!-- 앱이 요구하는 최소 iOS 버전 -->
-    <key>MinimumOSVersion</key>
-    <string>16.0</string>
-    
-    <!-- 앱 카테고리 -->
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.video</string>
-    
-    <!-- 파일 공유 활성화 (선택사항, 녹화 파일 저장용) -->
-    <key>UIFileSharingEnabled</key>
-    <true/>
-    <key>LSSupportsOpeningDocumentsInPlace</key>
-    <true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.3.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.video</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>15.0</string>
+	
+	<!-- CRITICAL: Enhanced Network Security for RTSP Streaming -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsForMedia</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<!-- Common RTSP streaming domains -->
+			<key>streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+			<key>wowzaec2demo.streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+			<key>demo.streamlock.net</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+			</dict>
+			<!-- Local network ranges -->
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	
+	<!-- Enhanced Network Discovery for IP Cameras -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_rtsp._tcp</string>
+		<string>_http._tcp</string>
+		<string>_rtmp._tcp</string>
+		<string>_streaming._tcp</string>
+		<string>_onvif._tcp</string>
+		<string>_axis-video._tcp</string>
+		<string>_hikvision._tcp</string>
+		<string>_dahua._tcp</string>
+	</array>
+	
+	<!-- Enhanced Privacy Descriptions -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>이 앱은 로컬 네트워크의 IP 카메라 및 RTSP 스트림에 연결하고, Enhanced Picture-in-Picture 기능을 제공하기 위해 로컬 네트워크 접근 권한이 필요합니다.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>RTSP 카메라 스트림을 재생하고 시스템 레벨 Picture-in-Picture 기능을 제공하기 위해 카메라 권한이 필요합니다.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RTSP 스트림의 오디오를 재생하고 Enhanced PiP에서 오디오를 지원하기 위해 마이크 권한이 필요합니다.</string>
+	
+	<!-- ESSENTIAL: System Level Picture-in-Picture Support -->
+	<key>NSSupportsAutomaticPictureInPicture</key>
+	<true/>
+	<key>AVInitialRouteSharingPolicy</key>
+	<string>LongFormAudio</string>
+	
+	<!-- Enhanced Scene Configuration for PiP -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	
+	<!-- CRITICAL: Background Modes for Enhanced System Level PiP -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- Core audio background mode for System PiP -->
+		<string>audio</string>
+		<!-- Background processing for enhanced frame handling -->
+		<string>background-processing</string>
+		<!-- Background fetch for stream management -->
+		<string>fetch</string>
+		<!-- Background audio for System PiP audio continuity -->
+		<string>background-audio</string>
+		<!-- AirPlay support for enhanced streaming -->
+		<string>airplay</string>
+		<!-- ESSENTIAL: Picture-in-Picture background mode -->
+		<string>picture-in-picture</string>
+		<!-- Voice over IP for network streaming -->
+		<string>voip</string>
+	</array>
+	
+	<!-- Enhanced Background Task Identifiers -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.sky.RTSPPlayer.background-refresh</string>
+		<string>com.sky.RTSPPlayer.frame-processing</string>
+		<string>com.sky.RTSPPlayer.stream-maintenance</string>
+		<string>com.sky.RTSPPlayer.pip-frame-extraction</string>
+		<string>com.sky.RTSPPlayer.sample-buffer-processing</string>
+	</array>
+	
+	<!-- File Sharing and Document Support -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UISupportsDocumentBrowser</key>
+	<true/>
+	
+	<!-- Enhanced Launch Configuration -->
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIRequiresFullScreen</key>
+	<false/>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	
+	<!-- Comprehensive Orientation Support -->
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	
+	<!-- Status Bar Configuration -->
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>UIStatusBarHidden</key>
+	<false/>
+	
+	<!-- Enhanced Networking Capabilities -->
+	<key>com.apple.developer.networking.multicast</key>
+	<true/>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	
+	<!-- Enhanced Launch Screen Configuration -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>AccentColor</string>
+		<key>UIImageName</key>
+		<string>AppIcon</string>
+		<key>UILaunchScreenMininumSize</key>
+		<dict>
+			<key>UILaunchScreenSize</key>
+			<string>{375, 667}</string>
+		</dict>
+	</dict>
+	
+	<!-- CRITICAL: Enhanced Media Playback Optimization for PiP -->
+	<key>AVAudioSessionCategoryPlayback</key>
+	<true/>
+	<key>AVAudioSessionCategoryOptions</key>
+	<array>
+		<string>AVAudioSessionCategoryOptionMixWithOthers</string>
+		<string>AVAudioSessionCategoryOptionAllowBluetooth</string>
+		<string>AVAudioSessionCategoryOptionAllowBluetoothA2DP</string>
+		<string>AVAudioSessionCategoryOptionAllowAirPlay</string>
+		<string>AVAudioSessionCategoryOptionDefaultToSpeaker</string>
+	</array>
+	
+	<!-- Enhanced Video Codec Support for System PiP -->
+	<key>AVVideoCodecs</key>
+	<array>
+		<string>avc1</string>
+		<string>hev1</string>
+		<string>hvc1</string>
+		<string>vp09</string>
+		<string>mp4v</string>
+	</array>
+	
+	<!-- ESSENTIAL: Hardware Acceleration Support -->
+	<key>AVVideoCompressionProperties</key>
+	<dict>
+		<key>VideoToolboxHardwareAccelerationSupported</key>
+		<true/>
+		<key>H264HardwareAccelerationSupported</key>
+		<true/>
+		<key>HEVCHardwareAccelerationSupported</key>
+		<true/>
+	</dict>
+	
+	<!-- System Integration Requirements -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>video-camera</string>
+		<string>microphone</string>
+		<string>wifi</string>
+		<string>metal</string>
+	</array>
+	
+	<!-- Enhanced Performance Optimization -->
+	<key>UIApplicationExitsOnSuspend</key>
+	<false/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	
+	<!-- Security and Encryption -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	
+	<!-- Enhanced Hardware Acceleration and GPU -->
+	<key>MetalPerformanceShadersGraph</key>
+	<true/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	
+	<!-- System PiP Optimization Settings -->
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIPrerenderedIcon</key>
+	<false/>
+	
+	<!-- Accessibility Support -->
+	<key>UIAccessibilityEnabled</key>
+	<true/>
+	<key>UIVoiceOverEnabled</key>
+	<true/>
+	
+	<!-- CRITICAL: Enhanced PiP and Sample Buffer Display Layer Support -->
+	<key>AVSampleBufferDisplayLayerSupported</key>
+	<true/>
+	<key>AVPictureInPictureControllerSupported</key>
+	<true/>
+	<key>CVPixelBufferPoolSupported</key>
+	<true/>
+	
+	<!-- Frame Rate and Display Optimization -->
+	<key>CADisplayLinkSupported</key>
+	<true/>
+	<key>UIApplicationWillEnterForegroundNotification</key>
+	<true/>
+	<key>UIApplicationDidEnterBackgroundNotification</key>
+	<true/>
+	
+	<!-- Enhanced Memory Management -->
+	<key>NSSupportsLowMemoryWarnings</key>
+	<true/>
+	<key>UIApplicationSupportsLowMemoryWarnings</key>
+	<true/>
+	
+	<!-- Network Stream Optimization -->
+	<key>NSAllowsArbitraryLoadsInMedia</key>
+	<true/>
+	<key>NSAllowsLocalNetworking</key>
+	<true/>
+	
+	<!-- Advanced Video Processing -->
+	<key>CoreImageSupported</key>
+	<true/>
+	<key>CoreVideoSupported</key>
+	<true/>
+	<key>CoreMediaSupported</key>
+	<true/>
+	
+	<!-- VLC and Third-Party Media Framework Support -->
+	<key>VLCKitSupported</key>
+	<true/>
+	<key>ThirdPartyMediaFrameworksAllowed</key>
+	<true/>
+	
+	<!-- Enhanced Debugging and Development -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	
+	<!-- System-Level Integration -->
+	<key>UIApplicationSceneManifestGeneration</key>
+	<true/>
+	<key>UIApplicationSupportsMultipleScenes</key>
+	<false/>
+	
+	<!-- Enhanced PiP Window Management -->
+	<key>PiPWindowManagement</key>
+	<dict>
+		<key>SupportedAspectRatios</key>
+		<array>
+			<string>16:9</string>
+			<string>4:3</string>
+			<string>1:1</string>
+		</array>
+		<key>MinimumSize</key>
+		<dict>
+			<key>width</key>
+			<integer>240</integer>
+			<key>height</key>
+			<integer>135</integer>
+		</dict>
+		<key>MaximumSize</key>
+		<dict>
+			<key>width</key>
+			<integer>640</integer>
+			<key>height</key>
+			<integer>360</integer>
+		</dict>
+	</dict>
+	
+	<!-- Real-time Processing Capabilities -->
+	<key>RealTimeProcessingCapabilities</key>
+	<dict>
+		<key>FrameExtractionSupported</key>
+		<true/>
+		<key>LiveStreamProcessing</key>
+		<true/>
+		<key>LowLatencyMode</key>
+		<true/>
+		<key>HardwareAcceleration</key>
+		<true/>
+	</dict>
+	
+	<!-- Enhanced Error Handling and Recovery -->
+	<key>ErrorHandlingAndRecovery</key>
+	<dict>
+		<key>AutomaticStreamRecovery</key>
+		<true/>
+		<key>PiPFailureRecovery</key>
+		<true/>
+		<key>NetworkErrorHandling</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

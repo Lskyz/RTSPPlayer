@@ -11,6 +11,7 @@
 		334016152E782F8B00233EAA /* app.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016142E782F8B00233EAA /* app.swift */; };
 		334016162E782F8B00233EAA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016172E782F8B00233EAA /* ContentView.swift */; };
 		334016182E782F8B00233EAA /* RTSPViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016192E782F8B00233EAA /* RTSPViewModel.swift */; };
+		3340161C2E78307600233EAA /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 3340161B2E78307600233EAA /* VLCKitSPM */; };
 		334016202E782F8B00233EAA /* RTSPPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016212E782F8B00233EAA /* RTSPPlayerView.swift */; };
 		334016222E782F8B00233EAA /* PictureInPictureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 334016232E782F8B00233EAA /* PictureInPictureManager.swift */; };
 		334016242E782F8B00233EAA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 334016252E782F8B00233EAA /* Assets.xcassets */; };
