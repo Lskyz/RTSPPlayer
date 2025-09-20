@@ -1,7 +1,7 @@
 import AVKit
 import UIKit
 import Combine
-import VLCKitSPM
+import MobileVLCKit
 import VideoToolbox
 import CoreMedia
 import CoreVideo
