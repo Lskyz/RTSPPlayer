@@ -16,7 +16,7 @@ protocol PictureInPictureManagerDelegate: AnyObject {
     func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void)
 }
 
-// MARK: - Enhanced PiP Manager with Direct VLC Video Callbacks
+// MARK: - Enhanced PiP Manager with Direct libvlc Video Callbacks
 class PictureInPictureManager: NSObject, ObservableObject {
     
     // Singleton
@@ -54,24 +54,30 @@ class PictureInPictureManager: NSObject, ObservableObject {
     
     // Frame buffer management
     private var pixelBufferPool: CVPixelBufferPool?
-    private let poolSize = 5
+    private let poolSize = 10
     
     // Performance tracking
     private var lastFrameTime = CACurrentMediaTime()
     private var frameCount = 0
     private var averageFPS: Double = 0
     
-    // VLC Video Callback - 핵심: 실제 비디오 프레임 수신
+    // 🔥 libvlc C API Video Callback - 직접 프레임 수신
     private var videoWidth: Int = 1920
     private var videoHeight: Int = 1080
-    private var isExtracting = false
-    private var displayLink: CADisplayLink?
+    private var isReceivingFrames = false
+    
+    // Video frame buffer (libvlc에서 직접 쓰는 버퍼)
+    private var videoBuffer: UnsafeMutableRawPointer?
+    private var videoBufferSize: Int = 0
+    
+    // Current pixel buffer being written
+    private var currentPixelBuffer: CVPixelBuffer?
+    private let bufferLock = NSLock()
     
     override init() {
         super.init()
         checkPiPSupport()
         setupAudioSession()
-        setupPixelBufferPool()
     }
     
     // MARK: - Setup
@@ -92,13 +98,13 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
     }
     
-    private func setupPixelBufferPool() {
+    private func setupPixelBufferPool(width: Int, height: Int) {
         let pixelBufferAttributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: videoWidth,
-            kCVPixelBufferHeightKey as String: videoHeight,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:],
-            kCVPixelBufferBytesPerRowAlignmentKey as String: 16
+            kCVPixelBufferBytesPerRowAlignmentKey as String: 64
         ]
         
         let poolAttributes: [String: Any] = [
@@ -116,7 +122,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
         
         if result == kCVReturnSuccess {
             pixelBufferPool = pool
-            print("🔧 Pixel buffer pool created successfully")
+            print("🔧 Pixel buffer pool created: \(width)x\(height)")
         } else {
             print("❌ Failed to create pixel buffer pool: \(result)")
         }
@@ -130,7 +136,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
         self.vlcPlayer = vlcPlayer
         self.containerView = containerView
         
-        print("🔗 Connecting to VLC player with direct video callbacks...")
+        print("🔗 Connecting to VLC player with direct libvlc video callbacks...")
         
         // Create display layer and view
         setupDisplayLayer(in: containerView)
@@ -170,9 +176,9 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayerView?.backgroundColor = .clear
         displayLayerView?.layer.addSublayer(displayLayer)
         
-        // 🔥 FIX: 숨김 상태 버그 수정 - 기본값은 보이지만 투명
-        displayLayerView?.isHidden = false  // 숨기지 않음!
-        displayLayerView?.alpha = 0  // 투명하게 시작
+        // Initially hidden but not removed
+        displayLayerView?.isHidden = false
+        displayLayerView?.alpha = 0
         
         // Add to container with proper constraints
         containerView.addSubview(displayLayerView!)
@@ -275,7 +281,6 @@ class PictureInPictureManager: NSObject, ObservableObject {
         guard let displayLayerView = displayLayerView else { return }
         
         DispatchQueue.main.async {
-            // 🔥 FIX: isHidden도 함께 관리
             if isPiPActive {
                 displayLayerView.isHidden = false
             }
@@ -298,15 +303,15 @@ class PictureInPictureManager: NSObject, ObservableObject {
             return
         }
         
-        print("🚀 Starting PiP with VLC video callbacks...")
+        print("🚀 Starting PiP with direct libvlc video callbacks...")
         
         // Reset counters
         frameCounter = 0
         frameCount = 0
         lastFrameTime = CACurrentMediaTime()
         
-        // 🔥 새로운 방식: VLC 스냅샷 기반 프레임 추출 시작
-        startVLCFrameExtraction()
+        // 🔥 Setup libvlc video callbacks for direct frame reception
+        setupLibVLCVideoCallbacks()
         
         // Small delay to ensure frames are being generated
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -322,8 +327,8 @@ class PictureInPictureManager: NSObject, ObservableObject {
         
         print("🛑 Stopping PiP...")
         
-        // Stop frame extraction
-        stopVLCFrameExtraction()
+        // Stop receiving frames
+        removeLibVLCVideoCallbacks()
         
         // Stop PiP
         pipController?.stopPictureInPicture()
@@ -337,67 +342,204 @@ class PictureInPictureManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - 🔥 VLC Frame Extraction (스냅샷 제거, 직접 비디오 콜백)
+    // MARK: - 🔥 libvlc C API Video Callbacks - Direct Frame Reception
     
-    private func startVLCFrameExtraction() {
-        guard !isExtracting, let player = vlcPlayer, player.isPlaying else {
-            print("⚠️ Cannot start extraction")
+    private func setupLibVLCVideoCallbacks() {
+        guard let media = vlcPlayer?.media,
+              let libvlcMedia = media.libVLCMediaInstance else {
+            print("❌ Cannot access libvlc media instance")
             return
         }
         
-        isExtracting = true
-        print("🎬 Starting VLC frame extraction via snapshots")
+        // Get actual video dimensions from VLC
+        let size = vlcPlayer?.videoSize ?? CGSize(width: 1920, height: 1080)
+        videoWidth = Int(size.width)
+        videoHeight = Int(size.height)
         
-        // Get video dimensions
-        let size = player.videoSize
-        if size.width > 0 && size.height > 0 {
-            videoWidth = Int(size.width)
-            videoHeight = Int(size.height)
+        print("📐 Video dimensions: \(videoWidth)x\(videoHeight)")
+        
+        // Setup pixel buffer pool with actual dimensions
+        setupPixelBufferPool(width: videoWidth, height: videoHeight)
+        
+        // Calculate buffer size for BGRA format
+        videoBufferSize = videoWidth * videoHeight * 4
+        
+        // Setup libvlc video callbacks
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        
+        // Set video format callback
+        libvlc_video_set_format_callbacks(
+            libvlcMedia,
+            { (opaque, chroma, width, height, pitches, lines) -> UInt32 in
+                guard let opaque = opaque else { return 0 }
+                let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
+                return manager.videoSetupCallback(chroma: chroma, width: width, height: height, pitches: pitches, lines: lines)
+            },
+            { (opaque) in
+                guard let opaque = opaque else { return }
+                let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
+                manager.videoCleanupCallback()
+            }
+        )
+        
+        // Set video callbacks for lock/unlock/display
+        libvlc_video_set_callbacks(
+            libvlcMedia,
+            { (opaque, planes) -> UnsafeMutableRawPointer? in
+                guard let opaque = opaque else { return nil }
+                let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
+                return manager.videoLockCallback(planes: planes)
+            },
+            { (opaque, picture, planes) in
+                guard let opaque = opaque else { return }
+                let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
+                manager.videoUnlockCallback(picture: picture, planes: planes)
+            },
+            { (opaque, picture) in
+                guard let opaque = opaque else { return }
+                let manager = Unmanaged<PictureInPictureManager>.fromOpaque(opaque).takeUnretainedValue()
+                manager.videoDisplayCallback(picture: picture)
+            },
+            selfPtr
+        )
+        
+        isReceivingFrames = true
+        print("✅ libvlc video callbacks configured")
+    }
+    
+    private func removeLibVLCVideoCallbacks() {
+        guard let media = vlcPlayer?.media,
+              let libvlcMedia = media.libVLCMediaInstance else {
+            return
+        }
+        
+        // Remove callbacks
+        libvlc_video_set_callbacks(libvlcMedia, nil, nil, nil, nil)
+        libvlc_video_set_format_callbacks(libvlcMedia, nil, nil)
+        
+        isReceivingFrames = false
+        
+        // Clean up buffer
+        if let buffer = videoBuffer {
+            buffer.deallocate()
+            videoBuffer = nil
+        }
+        
+        print("🛑 libvlc video callbacks removed")
+    }
+    
+    // MARK: - libvlc Video Callback Implementations
+    
+    private func videoSetupCallback(chroma: UnsafeMutablePointer<Int8>?, 
+                                   width: UnsafeMutablePointer<UInt32>?, 
+                                   height: UnsafeMutablePointer<UInt32>?, 
+                                   pitches: UnsafeMutablePointer<UInt32>?, 
+                                   lines: UnsafeMutablePointer<UInt32>?) -> UInt32 {
+        
+        // Set format to BGRA (reverse of ARGB due to byte order)
+        chroma?.pointee = Int8(bitPattern: UInt8(ascii: "R"))
+        chroma?.advanced(by: 1).pointee = Int8(bitPattern: UInt8(ascii: "V"))
+        chroma?.advanced(by: 2).pointee = Int8(bitPattern: UInt8(ascii: "3"))
+        chroma?.advanced(by: 3).pointee = Int8(bitPattern: UInt8(ascii: "2"))
+        
+        // Get dimensions
+        if let w = width?.pointee, let h = height?.pointee {
+            videoWidth = Int(w)
+            videoHeight = Int(h)
+            
+            // Setup pitch (bytes per row)
+            pitches?.pointee = w * 4
+            lines?.pointee = h
+            
+            print("📹 Video format: \(videoWidth)x\(videoHeight) BGRA")
             
             // Recreate pixel buffer pool with correct size
-            setupPixelBufferPool()
+            setupPixelBufferPool(width: videoWidth, height: videoHeight)
         }
         
-        // Use CADisplayLink for smooth extraction
-        DispatchQueue.main.async { [weak self] in
-            self?.displayLink = CADisplayLink(target: self!, selector: #selector(self?.extractVLCFrame))
-            self?.displayLink?.preferredFramesPerSecond = Int(self?.targetFrameRate ?? 30)
-            self?.displayLink?.add(to: .main, forMode: .common)
-        }
+        return 1 // Success
     }
     
-    private func stopVLCFrameExtraction() {
-        isExtracting = false
+    private func videoCleanupCallback() {
+        print("🧹 Video cleanup callback")
         
-        DispatchQueue.main.async { [weak self] in
-            self?.displayLink?.invalidate()
-            self?.displayLink = nil
+        if let buffer = videoBuffer {
+            buffer.deallocate()
+            videoBuffer = nil
         }
         
-        print("🛑 Frame extraction stopped")
+        currentPixelBuffer = nil
     }
     
-    @objc private func extractVLCFrame() {
-        guard isExtracting,
-              let player = vlcPlayer,
-              player.isPlaying else { return }
+    private func videoLockCallback(planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> UnsafeMutableRawPointer? {
+        bufferLock.lock()
         
-        // 🔥 VLCKit 스냅샷 API 사용 (UI 캡처 아님!)
-        // VLCKit의 takeSnapshot은 실제 비디오 프레임을 반환
-        player.saveVideoSnapshot(at: nil, withWidth: UInt32(videoWidth), height: UInt32(videoHeight)) { [weak self] image in
-            guard let self = self, let image = image else { return }
-            
-            self.frameProcessingQueue.async {
-                self.processVLCSnapshot(image)
+        // Create or reuse pixel buffer
+        var pixelBuffer: CVPixelBuffer?
+        
+        if let pool = pixelBufferPool {
+            let result = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+            if result != kCVReturnSuccess {
+                print("❌ Failed to create pixel buffer from pool: \(result)")
+                bufferLock.unlock()
+                return nil
             }
         }
+        
+        guard let buffer = pixelBuffer else {
+            bufferLock.unlock()
+            return nil
+        }
+        
+        // Lock pixel buffer
+        CVPixelBufferLockBaseAddress(buffer, [])
+        
+        // Get base address
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            bufferLock.unlock()
+            return nil
+        }
+        
+        // Store current buffer
+        currentPixelBuffer = buffer
+        
+        // Set plane pointer for libvlc to write to
+        planes?.pointee = baseAddress
+        
+        return baseAddress
     }
     
-    private func processVLCSnapshot(_ image: UIImage) {
-        guard let pixelBuffer = createPixelBuffer(from: image) else {
+    private func videoUnlockCallback(picture: UnsafeMutableRawPointer?, 
+                                    planes: UnsafeMutablePointer<UnsafeMutableRawPointer?>?) {
+        defer {
+            bufferLock.unlock()
+        }
+        
+        guard let pixelBuffer = currentPixelBuffer else {
             return
         }
         
+        // Unlock pixel buffer
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+    }
+    
+    private func videoDisplayCallback(picture: UnsafeMutableRawPointer?) {
+        guard let pixelBuffer = currentPixelBuffer else {
+            return
+        }
+        
+        // Process frame on background queue
+        frameProcessingQueue.async { [weak self] in
+            self?.processVideoFrame(pixelBuffer)
+        }
+        
+        currentPixelBuffer = nil
+    }
+    
+    // MARK: - Frame Processing
+    
+    private func processVideoFrame(_ pixelBuffer: CVPixelBuffer) {
         guard let sampleBuffer = createSampleBuffer(from: pixelBuffer) else {
             return
         }
@@ -405,60 +547,6 @@ class PictureInPictureManager: NSObject, ObservableObject {
         renderQueue.async { [weak self] in
             self?.renderSampleBuffer(sampleBuffer)
         }
-    }
-    
-    private func createPixelBuffer(from image: UIImage) -> CVPixelBuffer? {
-        guard let cgImage = image.cgImage else { return nil }
-        
-        var pixelBuffer: CVPixelBuffer?
-        
-        // Try pool first
-        if let pool = pixelBufferPool {
-            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-        }
-        
-        // If pool failed, create directly
-        if pixelBuffer == nil {
-            let attrs: [String: Any] = [
-                kCVPixelBufferCGImageCompatibilityKey as String: true,
-                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-            ]
-            
-            CVPixelBufferCreate(
-                kCFAllocatorDefault,
-                cgImage.width,
-                cgImage.height,
-                kCVPixelFormatType_32BGRA,
-                attrs as CFDictionary,
-                &pixelBuffer
-            )
-        }
-        
-        guard let buffer = pixelBuffer else { return nil }
-        
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        
-        let pixelData = CVPixelBufferGetBaseAddress(buffer)
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: pixelData,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: rgbColorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else { return nil }
-        
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        
-        return buffer
     }
     
     private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
@@ -536,7 +624,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
                 let timeDelta = currentTime - lastFrameTime
                 if timeDelta > 0 {
                     averageFPS = 30.0 / timeDelta
-                    print("📊 PiP Frame rate: \(String(format: "%.1f", averageFPS)) FPS")
+                    print("📊 PiP Frame rate: \(String(format: "%.1f", averageFPS)) FPS (Direct libvlc)")
                 }
                 lastFrameTime = currentTime
             }
@@ -561,7 +649,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
     private func cleanup() {
         print("🧹 Cleaning up PiP manager...")
         
-        stopVLCFrameExtraction()
+        removeLibVLCVideoCallbacks()
         
         pipController?.delegate = nil
         pipController = nil
@@ -576,6 +664,9 @@ class PictureInPictureManager: NSObject, ObservableObject {
         timebase = nil
         presentationStartTime = .zero
         frameCounter = 0
+        
+        currentPixelBuffer = nil
+        pixelBufferPool = nil
         
         cancellables.removeAll()
         
@@ -596,7 +687,7 @@ class PictureInPictureManager: NSObject, ObservableObject {
         if !isPiPSupported {
             return "Not Supported"
         } else if isPiPActive {
-            return "Active (\(String(format: "%.1f", averageFPS)) FPS)"
+            return "Active (Direct libvlc - \(String(format: "%.1f", averageFPS)) FPS)"
         } else if isPiPPossible {
             return "Ready"
         } else if vlcPlayer?.isPlaying ?? false {
@@ -613,15 +704,15 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         print("📱 PiP will start")
         
-        if !isExtracting {
-            startVLCFrameExtraction()
+        if !isReceivingFrames {
+            setupLibVLCVideoCallbacks()
         }
         
         delegate?.pipWillStart()
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        print("✅ PiP started successfully")
+        print("✅ PiP started successfully with direct libvlc video callbacks")
         isPiPActive = true
         delegate?.pipDidStart()
     }
@@ -634,7 +725,7 @@ extension PictureInPictureManager: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         print("✅ PiP stopped")
         isPiPActive = false
-        stopVLCFrameExtraction()
+        removeLibVLCVideoCallbacks()
         delegate?.pipDidStop()
     }
     
@@ -660,12 +751,12 @@ extension PictureInPictureManager: AVPictureInPictureSampleBufferPlaybackDelegat
         
         if playing {
             vlcPlayer?.play()
-            if !isExtracting {
-                startVLCFrameExtraction()
+            if !isReceivingFrames {
+                setupLibVLCVideoCallbacks()
             }
         } else {
             vlcPlayer?.pause()
-            stopVLCFrameExtraction()
+            removeLibVLCVideoCallbacks()
         }
     }
     
