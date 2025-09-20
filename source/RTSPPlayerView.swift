@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import VLCKitSPM
+import MobileVLCKit
 import AVKit
 
 // MARK: - Enhanced RTSP Player UIView with System Level PiP
