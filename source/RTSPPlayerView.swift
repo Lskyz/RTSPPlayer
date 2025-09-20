@@ -3,42 +3,35 @@ import SwiftUI
 import VLCKitSPM
 import AVKit
 
-// MARK: - RTSP Player UIView with Independent PiP Support
+// MARK: - RTSP Player UIView with Fixed Rendering and PiP
 class RTSPPlayerUIView: UIView {
     
     // VLC Components
     private var mediaPlayer: VLCMediaPlayer?
     private var media: VLCMedia?
     
-    // Video Container
+    // Video Layer for proper rendering
+    private var videoLayer: CALayer?
     private var videoContainerView: UIView?
-    private var containerViewConstraints: [NSLayoutConstraint] = []
     
-    // PiP Components - 독립적인 관리
+    // PiP Components
     private let pipManager = PictureInPictureManager.shared
-    private var isPiPSetup = false
+    private var isPiPEnabled = false
     
     // Stream Info
     private var currentStreamURL: String?
-    private var streamUsername: String?
-    private var streamPassword: String?
-    private var streamCaching: Int = 150
+    private var streamInfo: StreamInfo?
     
-    // Callbacks
-    var onStreamInfo: ((StreamInfo) -> Void)?
-    var onPiPStatusChanged: ((Bool) -> Void)?
+    // Performance Monitoring
+    private var performanceMonitor: PerformanceMonitor?
     
-    // UI State - PiP로 인한 숨김 상태 관리
-    private var isHiddenForPiP = false {
-        didSet {
-            updateVisibility()
-        }
-    }
+    // Layout constraints
+    private var containerViewConstraints: [NSLayoutConstraint] = []
     
     // Low Latency Options
     private let lowLatencyOptions: [String: String] = [
         "network-caching": "150",
-        "rtsp-caching": "150", 
+        "rtsp-caching": "150",
         "tcp-caching": "150",
         "realrtsp-caching": "150",
         "clock-jitter": "150",
@@ -56,13 +49,13 @@ class RTSPPlayerUIView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupPlayer()
-        setupPiPDelegate()
+        setupPerformanceMonitoring()
     }
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupPlayer()
-        setupPiPDelegate()
+        setupPerformanceMonitoring()
     }
     
     // MARK: - Setup
@@ -75,14 +68,20 @@ class RTSPPlayerUIView: UIView {
         
         // Initialize VLC Media Player
         mediaPlayer = VLCMediaPlayer()
+        
+        // Set drawable to the container view instead of self
         mediaPlayer?.drawable = videoContainerView
         mediaPlayer?.audio?.volume = 100
         mediaPlayer?.delegate = self
         
-        print("VLC Player initialized for independent PiP")
+        // Configure VLC for proper rendering
+        configureVLCPlayer()
+        
+        print("VLC Player initialized with proper drawable")
     }
     
     private func setupVideoContainer() {
+        // Create container view for video
         videoContainerView = UIView()
         videoContainerView?.backgroundColor = .black
         videoContainerView?.translatesAutoresizingMaskIntoConstraints = false
@@ -91,6 +90,7 @@ class RTSPPlayerUIView: UIView {
         
         addSubview(containerView)
         
+        // Set up constraints to fill the entire view
         containerViewConstraints = [
             containerView.topAnchor.constraint(equalTo: topAnchor),
             containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -103,17 +103,34 @@ class RTSPPlayerUIView: UIView {
         print("Video container setup completed")
     }
     
-    private func setupPiPDelegate() {
-        // PiP 매니저 델리게이트 설정
-        pipManager.delegate = self
+    private func configureVLCPlayer() {
+        guard let player = mediaPlayer else { return }
+        
+        // Configure video aspect ratio and scaling
+        player.videoAspectRatio = nil // Let VLC auto-detect
+        
+        // Enable hardware decoding
+        if let videoView = videoContainerView {
+            videoView.contentMode = .scaleAspectFit
+        }
+        
+        print("VLC Player configured for proper video rendering")
+    }
+    
+    private func setupPerformanceMonitoring() {
+        performanceMonitor = PerformanceMonitor()
+        performanceMonitor?.startMonitoring()
     }
     
     override func layoutSubviews() {
         super.layoutSubviews()
+        
+        // Update video container bounds
         videoContainerView?.frame = bounds
         
-        // VLC drawable 업데이트 (PiP로 숨겨져 있지 않을 때만)
-        if let player = mediaPlayer, player.isPlaying, !isHiddenForPiP {
+        // Force VLC to redraw if playing
+        if let player = mediaPlayer, player.isPlaying {
+            // Trigger a layout update
             DispatchQueue.main.async {
                 player.drawable = self.videoContainerView
             }
@@ -128,12 +145,6 @@ class RTSPPlayerUIView: UIView {
             stop()
         }
         
-        // Store stream info for PiP
-        currentStreamURL = url
-        streamUsername = username
-        streamPassword = password
-        streamCaching = networkCaching
-        
         // Build authenticated URL
         let authenticatedURL = buildAuthenticatedURL(url: url, username: username, password: password)
         
@@ -141,6 +152,8 @@ class RTSPPlayerUIView: UIView {
             print("Invalid URL: \(authenticatedURL)")
             return
         }
+        
+        currentStreamURL = authenticatedURL
         
         // Create VLC Media
         media = VLCMedia(url: mediaURL)
@@ -151,14 +164,15 @@ class RTSPPlayerUIView: UIView {
         // Set media and play
         mediaPlayer?.media = media
         
+        // Ensure proper drawable setup before playing
         DispatchQueue.main.async { [weak self] in
             self?.mediaPlayer?.drawable = self?.videoContainerView
             self?.mediaPlayer?.play()
             
             print("Starting stream: \(url)")
             
-            // Setup independent PiP after stream starts
-            self?.setupIndependentPiPAfterDelay()
+            // Setup PiP after a delay
+            self?.setupPiPAfterDelay()
         }
     }
     
@@ -183,6 +197,7 @@ class RTSPPlayerUIView: UIView {
     private func applyStreamOptimizations(caching: Int) {
         guard let media = media else { return }
         
+        // Update caching values
         var options = lowLatencyOptions
         options["network-caching"] = "\(caching)"
         options["rtsp-caching"] = "\(caching)"
@@ -190,6 +205,7 @@ class RTSPPlayerUIView: UIView {
         options["realrtsp-caching"] = "\(caching)"
         options["live-caching"] = "\(caching)"
         
+        // Apply all options
         for (key, value) in options {
             if value.isEmpty {
                 media.addOption("--\(key)")
@@ -198,47 +214,48 @@ class RTSPPlayerUIView: UIView {
             }
         }
         
-        // Additional optimizations for independent PiP
+        // Additional codec optimizations
         media.addOption("--intf=dummy")
         media.addOption("--no-audio-time-stretch")
         media.addOption("--no-network-synchronisation")
         media.addOption("--no-drop-late-frames")
+        media.addOption("--no-skip-frames")
+        media.addOption("--video-filter=")
+        media.addOption("--deinterlace=0")
         
-        print("Applied optimizations for independent PiP with caching: \(caching)ms")
+        print("Applied optimizations with caching: \(caching)ms")
     }
     
-    private func setupIndependentPiPAfterDelay() {
-        guard let mediaPlayer = mediaPlayer,
-              let streamURL = currentStreamURL else { return }
-        
+    private func setupPiPAfterDelay() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            guard mediaPlayer.isPlaying else { return }
-            
-            // 독립적인 PiP 설정 (메인 플레이어와 스트림 URL 전달)
-            self?.pipManager.setupIndependentPiP(for: mediaPlayer, streamURL: streamURL)
-            self?.isPiPSetup = true
-            
-            print("Independent PiP setup completed")
+            self?.setupPiP()
         }
     }
     
-    // MARK: - Playback Control Methods
+    private func setupPiP() {
+        guard let mediaPlayer = mediaPlayer,
+              let containerView = videoContainerView,
+              mediaPlayer.isPlaying,
+              !isPiPEnabled else { return }
+        
+        // Connect PiP manager to the video container view
+        pipManager.connectToVLCPlayer(mediaPlayer, containerView: containerView)
+        isPiPEnabled = true
+        
+        print("PiP setup completed")
+    }
     
     func stop() {
-        // Stop PiP first if active
-        if pipManager.isPiPActive {
-            pipManager.stopPiP()
-        }
-        
         mediaPlayer?.stop()
         media = nil
         currentStreamURL = nil
-        streamUsername = nil
-        streamPassword = nil
-        isPiPSetup = false
-        isHiddenForPiP = false
+        isPiPEnabled = false
+        streamInfo = nil
         
-        print("Stream stopped and PiP cleaned up")
+        // Clean up video container
+        videoContainerView?.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        
+        print("Stream stopped")
     }
     
     func pause() {
@@ -257,15 +274,84 @@ class RTSPPlayerUIView: UIView {
         return mediaPlayer?.isPlaying ?? false
     }
     
-    // MARK: - PiP Control Methods
+    // MARK: - Advanced Features
     
-    func startPictureInPicture() {
-        guard isPiPSetup, pipManager.canStartPiP else {
-            print("Cannot start PiP - not ready")
-            return
+    func updateNetworkCaching(_ caching: Int) {
+        guard let currentURL = currentStreamURL, isPlaying() else { return }
+        
+        // Restart with new caching settings
+        let wasPlaying = isPlaying()
+        stop()
+        
+        if wasPlaying {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.play(url: currentURL, networkCaching: caching)
+            }
+        }
+    }
+    
+    func getStreamInfo() -> StreamInfo? {
+        guard let mediaPlayer = mediaPlayer, mediaPlayer.isPlaying else { return nil }
+        
+        var info = StreamInfo()
+        
+        // Video info
+        let videoSize = mediaPlayer.videoSize
+        info.resolution = CGSize(width: CGFloat(videoSize.width), height: CGFloat(videoSize.height))
+        info.videoCodec = detectVideoCodec()
+        
+        // Audio info
+        if let audioTracks = mediaPlayer.audioTrackNames as? [String],
+           let audioTrack = audioTracks.first {
+            info.audioTrack = audioTrack
         }
         
-        pipManager.startPiP()
+        // Playback info
+        info.position = mediaPlayer.position
+        info.time = TimeInterval(mediaPlayer.time.intValue / 1000)
+        
+        // Network info
+        info.isBuffering = mediaPlayer.state == .buffering
+        info.droppedFrames = getDroppedFrames()
+        
+        // Performance info
+        if let performance = performanceMonitor?.getCurrentMetrics() {
+            info.cpuUsage = performance.cpuUsage
+            info.memoryUsage = performance.memoryUsage
+            info.fps = performance.fps
+        }
+        
+        self.streamInfo = info
+        return info
+    }
+    
+    private func detectVideoCodec() -> String {
+        if let media = media {
+            let url = media.url?.absoluteString ?? ""
+            if url.contains("h264") || url.contains("avc") {
+                return "H.264/AVC"
+            } else if url.contains("h265") || url.contains("hevc") {
+                return "H.265/HEVC"
+            }
+        }
+        
+        return "Unknown"
+    }
+    
+    private func getDroppedFrames() -> Int {
+        return 0
+    }
+    
+    // MARK: - PiP Control
+    
+    func startPictureInPicture() {
+        if !isPiPEnabled {
+            setupPiP()
+        }
+        
+        if pipManager.canStartPiP {
+            pipManager.startPiP()
+        }
     }
     
     func stopPictureInPicture() {
@@ -281,86 +367,16 @@ class RTSPPlayerUIView: UIView {
     }
     
     var isPiPPossible: Bool {
-        return pipManager.isPiPPossible && isPiPSetup
-    }
-    
-    var canStartPiP: Bool {
-        return pipManager.canStartPiP && isPiPSetup
-    }
-    
-    // MARK: - Visibility Management
-    
-    private func updateVisibility() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            if self.isHiddenForPiP {
-                // PiP 활성화시 메인 플레이어 숨김
-                self.videoContainerView?.alpha = 0.0
-                self.backgroundColor = .clear
-                
-                // VLC drawable을 nil로 설정하여 렌더링 중단
-                self.mediaPlayer?.drawable = nil
-                
-                print("Main player hidden for PiP")
-            } else {
-                // PiP 비활성화시 메인 플레이어 표시
-                self.videoContainerView?.alpha = 1.0
-                self.backgroundColor = .black
-                
-                // VLC drawable 복원
-                if let player = self.mediaPlayer, player.isPlaying {
-                    player.drawable = self.videoContainerView
-                }
-                
-                print("Main player restored from PiP")
-            }
-        }
-    }
-    
-    // MARK: - Stream Info
-    
-    func getStreamInfo() -> StreamInfo? {
-        guard let mediaPlayer = mediaPlayer, mediaPlayer.isPlaying else { return nil }
-        
-        var info = StreamInfo()
-        
-        let videoSize = mediaPlayer.videoSize
-        info.resolution = CGSize(width: CGFloat(videoSize.width), height: CGFloat(videoSize.height))
-        info.videoCodec = detectVideoCodec()
-        info.position = mediaPlayer.position
-        info.time = TimeInterval(mediaPlayer.time.intValue / 1000)
-        info.isBuffering = mediaPlayer.state == .buffering
-        
-        // PiP 상태 정보 추가
-        info.isPiPActive = isPiPActive
-        info.isPiPPossible = isPiPPossible
-        info.pipStatus = pipManager.pipStatus
-        
-        // 콜백 호출
-        onStreamInfo?(info)
-        onPiPStatusChanged?(isPiPActive)
-        
-        return info
-    }
-    
-    private func detectVideoCodec() -> String {
-        if let media = media {
-            let url = media.url?.absoluteString ?? ""
-            if url.contains("h264") || url.contains("avc") {
-                return "H.264/AVC"
-            } else if url.contains("h265") || url.contains("hevc") {
-                return "H.265/HEVC"
-            }
-        }
-        return "Unknown"
+        return pipManager.isPiPPossible
     }
     
     // MARK: - Cleanup
     
     deinit {
         stop()
+        performanceMonitor?.stopMonitoring()
         
+        // Clean up constraints
         NSLayoutConstraint.deactivate(containerViewConstraints)
         containerViewConstraints.removeAll()
         
@@ -381,36 +397,48 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
         switch player.state {
         case .opening:
             print("VLC: Opening stream...")
+            streamInfo?.state = "Opening"
             
         case .buffering:
             let bufferPercent = player.position * 100
             print("VLC: Buffering... \(Int(bufferPercent))%")
+            streamInfo?.state = "Buffering"
             
         case .playing:
             print("VLC: Playing - Video size: \(player.videoSize)")
+            streamInfo?.state = "Playing"
             
+            // Ensure proper video rendering
             DispatchQueue.main.async { [weak self] in
                 self?.videoContainerView?.setNeedsLayout()
                 self?.setNeedsLayout()
                 
-                // 스트림 정보 업데이트
-                _ = self?.getStreamInfo()
+                // Setup PiP if not done
+                if self?.isPiPEnabled == false {
+                    self?.setupPiPAfterDelay()
+                }
             }
             
         case .paused:
             print("VLC: Paused")
+            streamInfo?.state = "Paused"
             
         case .stopped:
             print("VLC: Stopped")
+            streamInfo?.state = "Stopped"
             
         case .error:
             print("VLC: Error occurred")
+            streamInfo?.state = "Error"
+            streamInfo?.lastError = "Stream playback error"
             
         case .ended:
             print("VLC: Ended")
+            streamInfo?.state = "Ended"
             
         case .esAdded:
             print("VLC: Elementary stream added")
+            streamInfo?.state = "ES Added"
             
         @unknown default:
             print("VLC: Unknown state")
@@ -418,50 +446,14 @@ extension RTSPPlayerUIView: VLCMediaPlayerDelegate {
     }
     
     func mediaPlayerTimeChanged(_ aNotification: Notification) {
-        // Time updates can be handled here if needed
-        DispatchQueue.main.async { [weak self] in
-            _ = self?.getStreamInfo()
+        if let player = aNotification.object as? VLCMediaPlayer {
+            streamInfo?.time = TimeInterval(player.time.intValue / 1000)
+            streamInfo?.position = player.position
         }
     }
 }
 
-// MARK: - PictureInPictureManagerDelegate
-extension RTSPPlayerUIView: PictureInPictureManagerDelegate {
-    
-    func pipWillStart() {
-        print("Main player: PiP will start")
-    }
-    
-    func pipDidStart() {
-        print("Main player: PiP did start")
-        onPiPStatusChanged?(true)
-    }
-    
-    func pipWillStop() {
-        print("Main player: PiP will stop")
-    }
-    
-    func pipDidStop() {
-        print("Main player: PiP did stop")
-        onPiPStatusChanged?(false)
-    }
-    
-    func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
-        // UI 복원 처리
-        DispatchQueue.main.async { [weak self] in
-            self?.isHiddenForPiP = false
-            completionHandler(true)
-        }
-    }
-    
-    func pipShouldHideMainPlayer(_ hide: Bool) {
-        // 핵심: PiP 상태에 따른 메인 플레이어 숨김/표시 제어
-        print("Main player should be \(hide ? "hidden" : "visible") for PiP")
-        isHiddenForPiP = hide
-    }
-}
-
-// MARK: - Enhanced Stream Info with PiP Status
+// MARK: - Stream Info Model
 struct StreamInfo {
     var state: String = "Idle"
     var resolution: CGSize = .zero
@@ -475,11 +467,6 @@ struct StreamInfo {
     var cpuUsage: Float = 0.0
     var memoryUsage: Float = 0.0
     var fps: Float = 0.0
-    
-    // PiP 관련 정보
-    var isPiPActive: Bool = false
-    var isPiPPossible: Bool = false
-    var pipStatus: String = "Inactive"
     
     var qualityDescription: String {
         if resolution.width >= 3840 {
@@ -501,15 +488,80 @@ struct StreamInfo {
         }
         return "N/A"
     }
+}
+
+// MARK: - Performance Monitor
+class PerformanceMonitor {
+    private var timer: Timer?
+    private var lastCPUInfo: host_cpu_load_info?
     
-    var pipStatusDescription: String {
-        if isPiPActive {
-            return "활성 (독립 실행)"
-        } else if isPiPPossible {
-            return "준비됨"
-        } else {
-            return "비활성"
+    struct Metrics {
+        var cpuUsage: Float = 0.0
+        var memoryUsage: Float = 0.0
+        var fps: Float = 0.0
+    }
+    
+    func startMonitoring() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateMetrics()
         }
+    }
+    
+    func stopMonitoring() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    func getCurrentMetrics() -> Metrics {
+        var metrics = Metrics()
+        
+        metrics.cpuUsage = getCPUUsage()
+        metrics.memoryUsage = getMemoryUsage()
+        metrics.fps = 30.0 // Placeholder
+        
+        return metrics
+    }
+    
+    private func updateMetrics() {
+        _ = getCurrentMetrics()
+    }
+    
+    private func getCPUUsage() -> Float {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        
+        let result = withUnsafeMutablePointer(to: &info) { infoPtr in
+            infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
+            }
+        }
+        
+        if result == KERN_SUCCESS {
+            return Float(info.resident_size) / Float(1024 * 1024)
+        }
+        
+        return 0.0
+    }
+    
+    private func getMemoryUsage() -> Float {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        
+        let result = withUnsafeMutablePointer(to: &info) { infoPtr in
+            infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), intPtr, &count)
+            }
+        }
+        
+        if result == KERN_SUCCESS {
+            return Float(info.resident_size) / Float(1024 * 1024 * 1024)
+        }
+        
+        return 0.0
+    }
+    
+    deinit {
+        stopMonitoring()
     }
 }
 
@@ -521,42 +573,18 @@ struct RTSPPlayerView: UIViewRepresentable {
     var password: String?
     var networkCaching: Int = 150
     
-    // 콜백 클로저들 - 이제 직접 매개변수로 받음
-    var onStreamInfoCallback: ((StreamInfo) -> Void)?
-    var onPiPStatusCallback: ((Bool) -> Void)?
-    
-    // 생성자 추가 - 콜백들을 직접 받을 수 있도록
-    init(url: Binding<String>, 
-         isPlaying: Binding<Bool>, 
-         username: String? = nil, 
-         password: String? = nil, 
-         networkCaching: Int = 150,
-         onStreamInfo: ((StreamInfo) -> Void)? = nil,
-         onPiPStatus: ((Bool) -> Void)? = nil) {
-        self._url = url
-        self._isPlaying = isPlaying
-        self.username = username
-        self.password = password
-        self.networkCaching = networkCaching
-        self.onStreamInfoCallback = onStreamInfo
-        self.onPiPStatusCallback = onPiPStatus
-    }
+    var onStreamInfo: ((StreamInfo) -> Void)?
+    var onPiPStatusChanged: ((Bool) -> Void)?
     
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
         
-        // 콜백 설정
-        playerView.onStreamInfo = onStreamInfoCallback
-        playerView.onPiPStatusChanged = onPiPStatusCallback
+        PictureInPictureManager.shared.delegate = context.coordinator
         
         return playerView
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
-        // 콜백 업데이트
-        uiView.onStreamInfo = onStreamInfoCallback
-        uiView.onPiPStatusChanged = onPiPStatusCallback
-        
         if isPlaying {
             if !uiView.isPlaying() && !url.isEmpty {
                 uiView.play(url: url, username: username, password: password, networkCaching: networkCaching)
@@ -566,6 +594,14 @@ struct RTSPPlayerView: UIViewRepresentable {
                 uiView.pause()
             }
         }
+        
+        uiView.updateNetworkCaching(networkCaching)
+        
+        if let info = uiView.getStreamInfo() {
+            onStreamInfo?(info)
+        }
+        
+        onPiPStatusChanged?(uiView.isPiPActive)
     }
     
     static func dismantleUIView(_ uiView: RTSPPlayerUIView, coordinator: Coordinator) {
@@ -576,11 +612,45 @@ struct RTSPPlayerView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    class Coordinator: NSObject {
+    class Coordinator: NSObject, PictureInPictureManagerDelegate {
         let parent: RTSPPlayerView
         
         init(_ parent: RTSPPlayerView) {
             self.parent = parent
         }
+        
+        func pipDidStart() {
+            parent.onPiPStatusChanged?(true)
+        }
+        
+        func pipDidStop() {
+            parent.onPiPStatusChanged?(false)
+        }
+        
+        func pipWillStart() {
+        }
+        
+        func pipWillStop() {
+        }
+        
+        func pipRestoreUserInterface(completionHandler: @escaping (Bool) -> Void) {
+            completionHandler(true)
+        }
+    }
+}
+
+// MARK: - Helper Extensions
+extension RTSPPlayerView {
+    
+    func onStreamInfoUpdate(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
+        var view = self
+        view.onStreamInfo = callback
+        return view
+    }
+    
+    func onPiPStatusUpdate(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
+        var view = self
+        view.onPiPStatusChanged = callback
+        return view
     }
 }
