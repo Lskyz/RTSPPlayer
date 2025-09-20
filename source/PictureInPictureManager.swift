@@ -357,10 +357,8 @@ class PictureInPictureManager: NSObject, ObservableObject {
         displayLayerView?.removeFromSuperview()
         displayLayerView = nil
         
-        if let timebase = timebase {
-            CFRelease(timebase)
-            self.timebase = nil
-        }
+        // Swift ARC will handle timebase cleanup automatically
+        timebase = nil
         
         presentationStartTime = .zero
         frameCounter = 0
@@ -522,8 +520,8 @@ class VLCFrameExtractor: NSObject {
             CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
         }
         
-        guard let buffer = pixelBuffer else {
-            // Fallback to direct creation
+        // If pool creation failed, create directly
+        if pixelBuffer == nil {
             let attrs: [String: Any] = [
                 kCVPixelBufferCGImageCompatibilityKey as String: true,
                 kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
@@ -541,9 +539,10 @@ class VLCFrameExtractor: NSObject {
                 attrs as CFDictionary,
                 &pixelBuffer
             )
-            
-            guard let fallbackBuffer = pixelBuffer else { return nil }
-            buffer = fallbackBuffer
+        }
+        
+        guard let buffer = pixelBuffer else { 
+            return nil 
         }
         
         CVPixelBufferLockBaseAddress(buffer, [])
