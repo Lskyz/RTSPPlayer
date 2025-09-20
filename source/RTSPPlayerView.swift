@@ -364,7 +364,7 @@ class RTSPPlayerUIView: UIView {
         NSLayoutConstraint.deactivate(containerViewConstraints)
         containerViewConstraints.removeAll()
         
-        videoContainerView?.removeFromSuperlayer()
+        videoContainerView?.removeFromSuperview()
         videoContainerView = nil
         
         mediaPlayer = nil
@@ -513,7 +513,7 @@ struct StreamInfo {
     }
 }
 
-// MARK: - SwiftUI Wrapper (수정됨)
+// MARK: - SwiftUI Wrapper
 struct RTSPPlayerView: UIViewRepresentable {
     @Binding var url: String
     @Binding var isPlaying: Bool
@@ -521,24 +521,41 @@ struct RTSPPlayerView: UIViewRepresentable {
     var password: String?
     var networkCaching: Int = 150
     
-    // 콜백 클로저들 - 초기화 시점에 설정
-    var onStreamInfoUpdate: ((StreamInfo) -> Void)?
-    var onPiPStatusUpdate: ((Bool) -> Void)?
+    // 콜백 클로저들 - 이제 직접 매개변수로 받음
+    var onStreamInfoCallback: ((StreamInfo) -> Void)?
+    var onPiPStatusCallback: ((Bool) -> Void)?
+    
+    // 생성자 추가 - 콜백들을 직접 받을 수 있도록
+    init(url: Binding<String>, 
+         isPlaying: Binding<Bool>, 
+         username: String? = nil, 
+         password: String? = nil, 
+         networkCaching: Int = 150,
+         onStreamInfo: ((StreamInfo) -> Void)? = nil,
+         onPiPStatus: ((Bool) -> Void)? = nil) {
+        self._url = url
+        self._isPlaying = isPlaying
+        self.username = username
+        self.password = password
+        self.networkCaching = networkCaching
+        self.onStreamInfoCallback = onStreamInfo
+        self.onPiPStatusCallback = onPiPStatus
+    }
     
     func makeUIView(context: Context) -> RTSPPlayerUIView {
         let playerView = RTSPPlayerUIView()
         
         // 콜백 설정
-        playerView.onStreamInfo = onStreamInfoUpdate
-        playerView.onPiPStatusChanged = onPiPStatusUpdate
+        playerView.onStreamInfo = onStreamInfoCallback
+        playerView.onPiPStatusChanged = onPiPStatusCallback
         
         return playerView
     }
     
     func updateUIView(_ uiView: RTSPPlayerUIView, context: Context) {
         // 콜백 업데이트
-        uiView.onStreamInfo = onStreamInfoUpdate
-        uiView.onPiPStatusChanged = onPiPStatusUpdate
+        uiView.onStreamInfo = onStreamInfoCallback
+        uiView.onPiPStatusChanged = onPiPStatusCallback
         
         if isPlaying {
             if !uiView.isPlaying() && !url.isEmpty {
@@ -565,23 +582,5 @@ struct RTSPPlayerView: UIViewRepresentable {
         init(_ parent: RTSPPlayerView) {
             self.parent = parent
         }
-    }
-}
-
-// MARK: - RTSPPlayerView 빌더 메서드들 (수정됨)
-extension RTSPPlayerView {
-    
-    // 스트림 정보 업데이트 콜백 설정
-    func onStreamInfoUpdated(_ callback: @escaping (StreamInfo) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onStreamInfoUpdate = callback
-        return view
-    }
-    
-    // PiP 상태 업데이트 콜백 설정
-    func onPiPStatusUpdated(_ callback: @escaping (Bool) -> Void) -> RTSPPlayerView {
-        var view = self
-        view.onPiPStatusUpdate = callback
-        return view
     }
 }
